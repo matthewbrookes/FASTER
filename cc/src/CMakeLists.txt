@@ -9,6 +9,7 @@ set (FASTER_HEADERS
   core/checkpoint_state.h
   core/constants.h
   core/faster.h
+  core/faster-c.h
   core/gc_state.h
   core/grow_state.h
   core/guid.h
@@ -47,6 +48,7 @@ endif()
 
 set (FASTER_SOURCES
   core/address.cc
+  core/faster-c.cc
   core/lss_allocator.cc
   core/thread.cc
 )
