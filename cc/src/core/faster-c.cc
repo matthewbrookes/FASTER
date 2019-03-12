@@ -64,6 +64,35 @@ extern "C" {
     };
   };
 
+  class ValueNew : Value{
+  public:
+      ValueNew()
+              : value_{ 0 } {
+      }
+
+      ValueNew(const ValueNew& other)
+              : value_{ other.value_ } {
+      }
+
+      ValueNew(void* value)
+              : value_{ value } {
+      }
+
+      inline static constexpr uint32_t size() {
+        return static_cast<uint32_t>(sizeof(ValueNew));
+      }
+
+      friend class UpsertNewContext;
+      friend class ReadContext;
+      friend class RmwContext;
+
+  private:
+      union {
+          void* value_;
+          std::atomic<void*> atomic_value_;
+      };
+  };
+
   class ReadContext : public IAsyncContext {
    public:
     typedef Key key_t;
@@ -154,6 +183,49 @@ extern "C" {
     uint64_t input_;
   };
 
+  class UpsertNewContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef ValueNew value_t;
+
+      UpsertNewContext(uint64_t key, void* input)
+              : key_{ key }
+              , input_{ input } {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      UpsertNewContext(const UpsertNewContext& other)
+              : key_{ other.key_ }
+              , input_{ other.input_ } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+      inline static constexpr uint32_t value_size() {
+        return sizeof(value_t);
+      }
+
+      /// Non-atomic and atomic Put() methods.
+      inline void Put(value_t& value) {
+        value.value_ = input_;
+      }
+      inline bool PutAtomic(value_t& value) {
+        value.atomic_value_.store(input_);
+        return true;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+      void* input_;
+  };
   class RmwContext : public IAsyncContext {
    public:
     typedef Key key_t;
@@ -222,6 +294,18 @@ extern "C" {
     };
 
     UpsertContext context { key, value };
+    Status result = store->Upsert(context, callback, 1);
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_upsert_new(faster_t* faster_t, const uint64_t key, void* value) {
+    store_t* store = faster_t->obj;
+
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        assert(result == Status::Ok);
+    };
+
+    UpsertNewContext context { key, value };
     Status result = store->Upsert(context, callback, 1);
     return static_cast<uint8_t>(result);
   }
