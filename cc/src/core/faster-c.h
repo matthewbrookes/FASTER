@@ -32,6 +32,7 @@ extern "C" {
   typedef enum faster_status faster_status;
 
   typedef void (*read_callback)(void*, uint64_t, faster_status);
+  typedef void (*read_callback_new)(void*, void*, faster_status);
 
   typedef struct faster_checkpoint_result faster_checkpoint_result;
   struct faster_checkpoint_result {
@@ -59,6 +60,7 @@ extern "C" {
   uint8_t faster_upsert_new(faster_t* faster_t, const uint64_t key, void* value);
   uint8_t faster_rmw(faster_t* faster_t, const uint64_t key, const uint64_t value);
   uint8_t faster_read(faster_t* faster_t, const uint64_t key, read_callback cb, void* target);
+  uint8_t faster_read_new(faster_t* faster_t, const uint64_t key, read_callback_new cb, void* target);
   faster_checkpoint_result* faster_checkpoint(faster_t* faster_t);
   void faster_destroy(faster_t* faster_t);
   uint64_t faster_size(faster_t* faster_t);

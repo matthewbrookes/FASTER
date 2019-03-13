@@ -83,7 +83,7 @@ extern "C" {
       }
 
       friend class UpsertNewContext;
-      friend class ReadContext;
+      friend class ReadNewContext;
       friend class RmwContext;
 
   private:
@@ -139,6 +139,51 @@ extern "C" {
     void* target_;
   };
 
+  class ReadNewContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef ValueNew value_t;
+
+      ReadNewContext(uint64_t key, read_callback_new cb, void* target)
+              : key_{ key }
+              , cb_ { cb }
+              , target_ { target }  {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      ReadNewContext(const ReadNewContext& other)
+              : key_{ other.key_ }
+              , cb_ { other.cb_ }
+              , target_ { other.target_ }  {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+
+      inline void Get(const value_t& value) {
+        cb_(target_, value.value_, Ok);
+      }
+      inline void GetAtomic(const value_t& value) {
+        cb_(target_, value.atomic_value_.load(), Ok);
+      }
+
+      uint64_t val() const {
+        return 1;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+      read_callback_new cb_;
+      void* target_;
+  };
   class UpsertContext : public IAsyncContext {
    public:
     typedef Key key_t;
@@ -330,6 +375,23 @@ extern "C" {
     };
 
     ReadContext context {key, cb, target};
+    Status result = store->Read(context, callback, 1);
+
+    if (result == Status::NotFound) {
+      cb(target, 0, NotFound);
+    }
+
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_read_new(faster_t* faster_t, const uint64_t key, read_callback_new cb, void* target) {
+    store_t* store = faster_t->obj;
+
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        CallbackContext<ReadNewContext> context { ctxt };
+    };
+
+    ReadNewContext context {key, cb, target};
     Status result = store->Read(context, callback, 1);
 
     if (result == Status::NotFound) {
