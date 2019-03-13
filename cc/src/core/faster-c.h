@@ -58,6 +58,7 @@ extern "C" {
   faster_t* faster_open_with_disk(const uint64_t table_size, const uint64_t log_size, const char* storage);
   uint8_t faster_upsert(faster_t* faster_t, const uint64_t key, const uint64_t value);
   uint8_t faster_upsert_new(faster_t* faster_t, const uint64_t key, void* value);
+  uint8_t faster_upsert_binary(faster_t* faster_t, const uint64_t key, uint8_t* value, uint64_t size);
   uint8_t faster_rmw(faster_t* faster_t, const uint64_t key, const uint64_t value);
   uint8_t faster_read(faster_t* faster_t, const uint64_t key, read_callback cb, void* target);
   uint8_t faster_read_new(faster_t* faster_t, const uint64_t key, read_callback_new cb, void* target);

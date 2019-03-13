@@ -93,6 +93,36 @@ extern "C" {
       };
   };
 
+  class ValueBinary : Value{
+  public:
+      ValueBinary(uint8_t* data, int size) {
+        value_ = new uint8_t[size];
+        memcpy(value_, data, size);
+      }
+
+      ValueBinary(const ValueBinary& other)
+              : value_{ other.value_ } {
+      }
+
+      ValueBinary(uint8_t* value)
+              : value_{ value } {
+      }
+
+      inline static constexpr uint32_t size() {
+        return static_cast<uint32_t>(sizeof(ValueBinary));
+      }
+
+      friend class UpsertBinaryContext;
+      friend class ReadContext;
+      friend class RmwContext;
+
+  private:
+      union {
+          uint8_t* value_;
+          std::atomic<uint8_t*> atomic_value_;
+      };
+  };
+
   class ReadContext : public IAsyncContext {
    public:
     typedef Key key_t;
@@ -271,6 +301,59 @@ extern "C" {
       Key key_;
       void* input_;
   };
+
+  class UpsertBinaryContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef ValueBinary value_t;
+
+      UpsertBinaryContext(uint64_t key, uint8_t* input, uint64_t size)
+              : key_{ key }
+              , input_{ input }
+              , size_{ size } {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      UpsertBinaryContext(const UpsertBinaryContext& other)
+              : key_{ other.key_ }
+              , input_{ other.input_ }
+              , size_{ other.size_ } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+      inline static constexpr uint32_t value_size() {
+        return sizeof(value_t);
+      }
+
+      /// Non-atomic and atomic Put() methods.
+      /// Note: these are not currently in-place updates
+      inline void Put(value_t& value) {
+        uint8_t *value_ = new uint8_t[size_];
+        memcpy(value_, input_, size_);
+        value.value_ = value_;
+      }
+      inline bool PutAtomic(value_t& value) {
+        uint8_t *value_ = new uint8_t[size_];
+        memcpy(value_, input_, size_);
+        value.atomic_value_.store(value_);
+        return true;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+      uint8_t* input_;
+      uint64_t size_;
+  };
+
   class RmwContext : public IAsyncContext {
    public:
     typedef Key key_t;
@@ -351,6 +434,18 @@ extern "C" {
     };
 
     UpsertNewContext context { key, value };
+    Status result = store->Upsert(context, callback, 1);
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_upsert_binary(faster_t* faster_t, const uint64_t key, uint8_t* value, uint64_t size) {
+    store_t* store = faster_t->obj;
+
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        assert(result == Status::Ok);
+    };
+
+    UpsertBinaryContext context { key, value, size };
     Status result = store->Upsert(context, callback, 1);
     return static_cast<uint8_t>(result);
   }
