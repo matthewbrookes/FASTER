@@ -115,7 +115,7 @@ extern "C" {
 
       friend class UpsertBinaryContext;
       friend class ReadBinaryContext;
-      friend class RmwContext;
+      friend class RmwBinaryContext;
 
   private:
       union {
@@ -452,6 +452,74 @@ extern "C" {
     uint64_t incr_;
   };
 
+  class RmwBinaryContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef ValueBinary value_t;
+
+      RmwBinaryContext(uint64_t key, uint8_t* mod, uint64_t size, rmw_callback cb)
+              : key_{ key }
+              , mod_{ mod }
+              , size_{ size }
+              , cb_{ cb } {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      RmwBinaryContext(const RmwBinaryContext& other)
+              : key_{ other.key_ }
+              , mod_{ other.mod_ }
+              , size_{ other.size_ }
+              , cb_{ other.cb_ } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      const Key& key() const {
+        return key_;
+      }
+      inline static constexpr uint32_t value_size() {
+        return sizeof(value_t);
+      }
+
+      /// Initial, non-atomic, and atomic RMW methods.
+      inline void RmwInitial(value_t& value) {
+        value.value_ = mod_;
+        value.size_ = size_;
+      }
+      inline void RmwCopy(const value_t& old_value, value_t& value) {
+        faster_rmw_result result = cb_(old_value.value_, mod_, old_value.size_, size_);
+        uint8_t *value_ = new uint8_t[result.size];
+        memcpy(value_, result.value, result.size);
+        free(result.value);
+        value.value_ = value_;
+        value.size_ = result.size;
+      }
+      inline bool RmwAtomic(value_t& value) {
+        uint8_t* current_value = value.atomic_value_.load();
+        uint8_t current_size = value.size_;
+        faster_rmw_result result = cb_(current_value, mod_, current_size, size_);
+        uint8_t *value_ = new uint8_t[result.size];
+        memcpy(value_, result.value, result.size);
+        free(result.value);
+        bool success = value.atomic_value_.compare_exchange_strong(current_value, value_, std::memory_order_release, std::memory_order_relaxed);
+        if (success) {
+          value.size_ = result.size;
+        }
+        return success;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+      uint8_t* mod_;
+      uint64_t size_;
+      rmw_callback cb_;
+  };
+
   typedef FASTER::environment::QueueIoHandler handler_t;
   typedef FASTER::device::FileSystemDisk<handler_t, 1073741824L> disk_t;
   typedef FASTER::device::NullDisk  disk_null_t;
@@ -509,6 +577,18 @@ extern "C" {
     };
 
     RmwContext context{ key, value};
+    Status result = store->Rmw(context, callback, 1);
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_rmw_binary(faster_t* faster_t, const uint64_t key, uint8_t* value, const uint64_t size, rmw_callback cb) {
+    store_t* store = faster_t->obj;
+
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        CallbackContext<RmwBinaryContext> context { ctxt };
+    };
+
+    RmwBinaryContext context{ key, value, size, cb};
     Status result = store->Rmw(context, callback, 1);
     return static_cast<uint8_t>(result);
   }
