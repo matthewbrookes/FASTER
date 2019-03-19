@@ -12,6 +12,7 @@ void callback(void* func, uint64_t x, faster_status status) {
 
 
 int main() {
+  /*
   uint64_t table_size = (1L << 14);
   uint64_t log_size = 17179869184;
   const char* storage_dir = "storage_dir";
@@ -60,5 +61,6 @@ int main() {
 
   // Free the resources tied to STORE
   faster_destroy(store);
+   */
   return 0;
 }
