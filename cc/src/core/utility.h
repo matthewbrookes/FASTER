@@ -30,6 +30,23 @@ class Utility {
     //    e => 40343 * (40343 * (40343 * (40343 * (40343 * 8 + (long)((e) & 0xFFFF)) + (long)((e >> 16) & 0xFFFF)) + (long)((e >> 32) & 0xFFFF)) + (long)(e >> 48));
   }
 
+  static inline uint64_t Hash8BitBytes(const uint8_t* str, size_t len) {
+    // 40343 is a "magic constant" that works well,
+    // 38299 is another good value.
+    // Both are primes and have a good distribution of bits.
+    const uint64_t kMagicNum = 40343;
+    uint64_t hashState = len;
+
+    for(size_t idx = 0; idx < len; ++idx) {
+      hashState = kMagicNum * hashState + str[idx];
+    }
+
+    // The final scrambling helps with short keys that vary only on the high order bits.
+    // Low order bits are not always well distributed so shift them to the high end, where they'll
+    // form part of the 14-bit tag.
+    return Rotr64(kMagicNum * hashState, 6);
+  }
+
   static inline uint64_t HashBytes(const uint16_t* str, size_t len) {
     // 40343 is a "magic constant" that works well,
     // 38299 is another good value.
