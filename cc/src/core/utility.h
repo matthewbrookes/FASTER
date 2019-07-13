@@ -31,21 +31,20 @@ class Utility {
   }
 
   static inline uint64_t Hash8BitBytes(const uint8_t* str, size_t len) {
-    const long magicno = 40343;
-    char* pwString = (char*)str;
-    int cbBuf = len / 2;
-    ulong hashState = (ulong)len;
+    // 40343 is a "magic constant" that works well,
+    // 38299 is another good value.
+    // Both are primes and have a good distribution of bits.
+    const uint64_t kMagicNum = 40343;
+    uint64_t hashState = len;
 
-    for (int i = 0; i < cbBuf; i++, pwString++)
-      hashState = magicno * hashState + *pwString;
-
-    if ((len & 1) > 0)
-    {
-      uint8_t* pC = (uint8_t *)pwString;
-      hashState = magicno * hashState + *pC;
+    for(size_t idx = 0; idx < len; ++idx) {
+      hashState = kMagicNum * hashState + str[idx];
     }
 
-    return (long)Rotr64(magicno * hashState, 4);
+    // The final scrambling helps with short keys that vary only on the high order bits.
+    // Low order bits are not always well distributed so shift them to the high end, where they'll
+    // form part of the 14-bit tag.
+    return Rotr64(kMagicNum * hashState, 6);
   }
 
   static inline uint64_t HashBytes(const uint16_t* str, size_t len) {
