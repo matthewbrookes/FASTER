@@ -258,7 +258,7 @@ extern "C" {
     typedef Key key_t;
     typedef Value value_t;
 
-    UpsertContext(const uint8_t* key, uint64_t key_length, uint8_t* input, uint64_t length)
+    UpsertContext(const uint8_t* key, const uint64_t key_length, const uint8_t* input, const uint64_t length)
       : key_{ key, key_length }
       , input_{ input }
       , length_{ length } {
@@ -274,7 +274,7 @@ extern "C" {
 
     ~UpsertContext() {
       if (input_ != NULL) {
-        deallocate_vec(input_, length_);
+        deallocate_vec((uint8_t*) input_, length_);
       }
     }
 
@@ -321,8 +321,8 @@ extern "C" {
 
   private:
     key_t key_;
-    uint8_t* input_;
-    uint64_t length_;
+    const uint8_t* input_;
+    const uint64_t length_;
   };
 
   class RmwContext : public IAsyncContext {
@@ -330,11 +330,13 @@ extern "C" {
     typedef Key key_t;
     typedef Value value_t;
 
-    RmwContext(const uint8_t* key, uint64_t key_length, uint8_t* modification, uint64_t length, rmw_callback cb)
+    RmwContext(const uint8_t* key, const uint64_t key_length, const uint8_t* modification,
+               const uint64_t length, rmw_callback cb, void* rmw_logic)
       : key_{ key, key_length }
       , modification_{ modification }
       , length_{ length }
       , cb_{ cb }
+      , rmw_logic_{ rmw_logic }
       , new_length_{ 0 }{
     }
 
@@ -344,13 +346,14 @@ extern "C" {
       , modification_{ other.modification_ }
       , length_{ other.length_ }
       , cb_{ other.cb_ }
+      , rmw_logic_{ other.rmw_logic_ }
       , new_length_{ other.new_length_ }{
       other.modification_ = NULL;
     }
 
     ~RmwContext() {
       if (modification_ != NULL) {
-        deallocate_vec(modification_, length_);
+        deallocate_vec((uint8_t*) modification_, length_);
       }
     }
 
@@ -363,7 +366,7 @@ extern "C" {
     }
     inline uint32_t value_size(const Value& old_value) {
       if (new_length_ == 0) {
-        new_length_ = cb_(old_value.buffer(), old_value.length_, modification_, length_, NULL);
+        new_length_ = cb_(old_value.buffer(), old_value.length_, modification_, length_, rmw_logic_, NULL);
       }
       return sizeof(Value) + new_length_;
     }
@@ -376,7 +379,7 @@ extern "C" {
     }
     inline void RmwCopy(const Value& old_value, Value& value) {
       value.gen_lock_.store(0);
-      value.length_ = cb_(old_value.buffer(), old_value.length_, modification_, length_, value.buffer());
+      value.length_ = cb_(old_value.buffer(), old_value.length_, modification_, length_, rmw_logic_, value.buffer());
       value.size_ = sizeof(Value) + value.length_;
     }
     inline bool RmwAtomic(Value& value) {
@@ -389,7 +392,7 @@ extern "C" {
         return false;
       }
       if (new_length_ == 0) {
-        new_length_ = cb_(value.buffer(), value.length_, modification_, length_, NULL);
+        new_length_ = cb_(value.buffer(), value.length_, modification_, length_, rmw_logic_, NULL);
       }
       if(value.size_ < sizeof(Value) + new_length_) {
         // Current value is too small for in-place update.
@@ -397,7 +400,7 @@ extern "C" {
         return false;
       }
       // In-place update overwrites length and buffer, but not size.
-      cb_(value.buffer(), value.length_, modification_, length_, value.buffer());
+      cb_(value.buffer(), value.length_, modification_, length_, rmw_logic_, value.buffer());
       value.length_ = new_length_;
       value.gen_lock_.unlock(false);
       return true;
@@ -411,9 +414,10 @@ extern "C" {
 
   private:
     Key key_;
-    uint8_t* modification_;
-    uint64_t length_;
+    const uint8_t* modification_;
+    const uint64_t length_;
     rmw_callback cb_;
+    void* rmw_logic_;
     uint64_t new_length_;
   };
 
@@ -480,7 +484,7 @@ extern "C" {
   }
 
   uint8_t faster_upsert(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
-                        uint8_t* value, uint64_t value_length, const uint64_t monotonic_serial_number) {
+                        const uint8_t* value, const uint64_t value_length, const uint64_t monotonic_serial_number) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
       assert(result == Status::Ok);
     };
@@ -498,13 +502,13 @@ extern "C" {
     return static_cast<uint8_t>(result);
   }
 
-  uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, uint8_t* modification,
-                     const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb) {
+  uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, const uint8_t* modification,
+                     const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb, void* rmw_logic) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
       CallbackContext<RmwContext> context { ctxt };
     };
 
-    RmwContext context{ key, key_length, modification, length, cb};
+    RmwContext context{ key, key_length, modification, length, cb, rmw_logic};
     Status result;
     switch (faster_t->type) {
       case NULL_DISK:

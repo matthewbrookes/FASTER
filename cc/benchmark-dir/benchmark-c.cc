@@ -76,7 +76,7 @@ void read_cb(void* target, const uint8_t* buffer, uint64_t length, faster_status
   assert(status == Ok);
 }
 
-uint64_t rmw_cb(const uint8_t* current, uint64_t length, uint8_t* modification, uint64_t modification_length, uint8_t* dst) {
+uint64_t rmw_cb(const uint8_t* current, const uint64_t length, const uint8_t* modification, const uint64_t modification_length, void* rmw_logic, uint8_t* dst) {
   assert(length == 1);
   assert(modification_length == 1);
   if (dst != NULL) {
@@ -323,9 +323,9 @@ void thread_run_benchmark(faster_t* store, size_t thread_idx) {
       case Op::ReadModifyWrite:
         uint8_t* modification = new uint8_t[1];
         modification[0] = 0;
-        uint8_t* key = new uint8_t[8];
-        memcpy(key, &txn_keys_.get()[idx], 8);
-        uint8_t result = faster_rmw(store, key, 8, modification, 1, 1, rmw_cb);
+        const uint8_t* key = new uint8_t[8];
+        memcpy((uint8_t*)key, &txn_keys_.get()[idx], 8);
+        uint8_t result = faster_rmw(store, key, 8, (const uint8_t*) modification, 1, 1, rmw_cb, NULL);
         if(result == 0) {
           ++writes_done;
         }

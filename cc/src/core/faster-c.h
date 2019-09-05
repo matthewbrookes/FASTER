@@ -31,8 +31,8 @@ extern "C" {
   };
   typedef enum faster_status faster_status;
 
-  typedef void (*read_callback)(void*, const uint8_t*, uint64_t, faster_status);
-  typedef uint64_t (*rmw_callback)(const uint8_t*, uint64_t, uint8_t*, uint64_t, uint8_t*);
+  typedef void (*read_callback)(void*, const uint8_t*, const uint64_t, faster_status);
+  typedef uint64_t (*rmw_callback)(const uint8_t*, const uint64_t, const uint8_t*, const uint64_t, void*, uint8_t*);
 
   typedef struct faster_checkpoint_result faster_checkpoint_result;
   struct faster_checkpoint_result {
@@ -75,9 +75,9 @@ extern "C" {
   faster_t* faster_open_with_disk(const uint64_t table_size, const uint64_t log_size, const char* storage,
                                   double log_mutable_fraction, bool pre_allocate_log);
   uint8_t faster_upsert(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
-                        uint8_t* value, uint64_t value_length, const uint64_t monotonic_serial_number);
-  uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, uint8_t* modification,
-                     const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb);
+                        const uint8_t* value, const uint64_t value_length, const uint64_t monotonic_serial_number);
+  uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, const uint8_t* modification,
+                     const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb, void* rmw_logic);
   uint8_t faster_read(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                        const uint64_t monotonic_serial_number, read_callback cb, void* target);
   uint8_t faster_delete(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
