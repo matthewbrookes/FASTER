@@ -11,6 +11,7 @@
 extern "C" {
 
   void deallocate_vec(uint8_t*, uint64_t);
+  void deallocate_string(char*);
 
   class Key {
     public:
@@ -225,18 +226,46 @@ extern "C" {
 
   class PersonValue {
   public:
-      PersonValue(person_t person)
-      : person_{ person } {
+      PersonValue()
+      : name_length_{ 0 }
+      , city_length_{ 0 }
+      , state_length_ { 0 }{
       }
 
       inline uint32_t size() const {
-        return sizeof(person_t);
+        return sizeof(PersonValue) + name_length_ + city_length_ + state_length_;
+      }
+
+      const char* name() const {
+        return reinterpret_cast<const char*>(this + 1);
+      }
+
+      const char* city() const {
+        return reinterpret_cast<const char*>(name() + name_length_);
+      }
+
+      const char* state() const {
+        return reinterpret_cast<const char*>(city() + city_length_);
+      }
+
+      char* name() {
+        return reinterpret_cast<char*>(this + 1);
+      }
+
+      char* city() {
+        return reinterpret_cast<char*>(name() + name_length_);
+      }
+
+      char* state() {
+        return reinterpret_cast<char*>(city() + city_length_);
       }
 
       friend class ReadPersonContext;
       friend class UpsertPersonContext;
   private:
-      person_t person_;
+      size_t name_length_;
+      size_t city_length_;
+      size_t state_length_;
   };
 
 class AuctionsValue {
@@ -345,15 +374,23 @@ public:
     }
 
     inline void Get(const value_t& value) {
-      cb_(target_, &value.person_, Ok);
+      person_t person;
+      person.name = value.name();
+      person.city = value.city();
+      person.state = value.state();
+      cb_(target_, person, Ok);
     }
     inline void GetAtomic(const value_t& value) {
-      cb_(target_, &value.person_, Ok);
+      person_t person;
+      person.name = value.name();
+      person.city = value.city();
+      person.state = value.state();
+      cb_(target_, person, Ok);
     }
 
     /// For async reads returning not found
     inline void ReturnNotFound() {
-      cb_(target_, NULL, NotFound);
+      cb_(target_, person_t {}, NotFound);
     }
 
 protected:
@@ -508,14 +545,30 @@ public:
       return key_;
     }
     inline uint32_t value_size() const {
-      return sizeof(value_t);
+      return sizeof(value_t) + input_.name_length + input_.city_length + input_.state_length;
     }
     /// Non-atomic and atomic Put() methods.
     inline void Put(value_t& value) {
-      value.person_ = input_;
+      value.name_length_ = input_.name_length;
+      value.city_length_ = input_.city_length;
+      value.state_length_ = input_.state_length;
+      memcpy(value.name(), input_.name, input_.name_length);
+      memcpy(value.city(), input_.city, input_.city_length);
+      memcpy(value.state(), input_.state, input_.state_length);
+      deallocate_string((char *) input_.name);
+      deallocate_string((char *) input_.city);
+      deallocate_string((char *) input_.state);
     }
     inline bool PutAtomic(value_t& value) {
-      value.person_ = input_;
+      value.name_length_ = input_.name_length;
+      value.city_length_ = input_.city_length;
+      value.state_length_ = input_.state_length;
+      memcpy(value.name(), input_.name, input_.name_length);
+      memcpy(value.city(), input_.city, input_.city_length);
+      memcpy(value.state(), input_.state, input_.state_length);
+      deallocate_string((char *) input_.name);
+      deallocate_string((char *) input_.city);
+      deallocate_string((char *) input_.state);
       return true;
     }
 
@@ -916,7 +969,7 @@ uint8_t faster_read_person(faster_t* faster_t, const uint64_t key, const uint64_
   Status result = faster_t->obj.people_store->Read(context, callback, monotonic_serial_number);
 
   if (result == Status::NotFound) {
-    cb(target, NULL, NotFound);
+    cb(target, person_t {}, NotFound);
   }
 
   return static_cast<uint8_t>(result);

@@ -94,6 +94,12 @@ extern "C" {
   }
 }
 
+extern "C" {
+  void deallocate_string(char* str) {
+    free(str);
+  }
+}
+
 /// Affinitize to hardware threads on the same core first, before
 /// moving on to the next core.
 void SetThreadAffinity(size_t core) {
