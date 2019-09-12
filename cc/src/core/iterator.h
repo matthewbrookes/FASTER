@@ -57,9 +57,8 @@ private:
 
 template <class K, class V, class D>
 bool FasterIterator<K, V, D>::GetNext(FasterIteratorRecord<K, V, D>* out) {
-  current_address_ = next_address_;
-
   while (true) {
+    current_address_ = next_address_;
     if (current_address_ >= end_address_) {
       return false;
     }
@@ -73,8 +72,14 @@ bool FasterIterator<K, V, D>::GetNext(FasterIteratorRecord<K, V, D>* out) {
     }
 
     auto record_ = reinterpret_cast<const record_t*>(hlog_->Get(current_address_));
+    uint32_t record_size = record_->size();
 
     if (record_->header.invalid) {
+      continue;
+    }
+
+    if (record_->header.tombstone) {
+      next_address_ += record_size;
       continue;
     }
 
@@ -83,7 +88,6 @@ bool FasterIterator<K, V, D>::GetNext(FasterIteratorRecord<K, V, D>* out) {
     out->key_ = &key;
     out->value_ = &value;
 
-    uint32_t record_size = record_->size();
     next_address_ += record_size;
     return true;
   }
