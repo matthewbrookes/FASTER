@@ -91,6 +91,7 @@ class FasterKv {
   typedef AsyncPendingReadContext<key_t> async_pending_read_context_t;
   typedef AsyncPendingUpsertContext<key_t> async_pending_upsert_context_t;
   typedef AsyncPendingRmwContext<key_t> async_pending_rmw_context_t;
+  typedef AsyncPendingDeleteContext<key_t> async_pending_delete_context_t;
 
   FasterKv(uint64_t table_size, uint64_t log_size, const std::string& filename,
            double log_mutable_fraction = 0.9)
@@ -130,8 +131,10 @@ class FasterKv {
 
   template <class MC>
   inline Status Rmw(MC& context, AsyncCallback callback, uint64_t monotonic_serial_num);
-  /// Delete() not yet implemented!
-  // void Delete(const Key& key, Context& context, uint64_t lsn);
+
+  template <class DC>
+  inline Status Delete(DC& context, AsyncCallback callback, uint64_t monotonic_serial_num);
+
   inline bool CompletePending(bool wait = false);
 
   /// Checkpoint/recovery operations.
@@ -176,6 +179,9 @@ class FasterKv {
 
   template <class C>
   inline OperationStatus InternalRmw(C& pending_context, bool retrying);
+
+  template<class C>
+  inline OperationStatus InternalDelete(C& pending_context);
 
   inline OperationStatus InternalRetryPendingRmw(async_pending_rmw_context_t& pending_context);
 
@@ -606,6 +612,27 @@ inline Status FasterKv<K, V, D>::Rmw(MC& context, AsyncCallback callback,
   Status status;
   if(internal_status == OperationStatus::SUCCESS) {
     status = Status::Ok;
+  } else {
+    bool async;
+    status = HandleOperationStatus(thread_ctx(), pending_context, internal_status, async);
+  }
+  thread_ctx().serial_num = monotonic_serial_num;
+  return status;
+}
+
+template <class K, class V, class D>
+template <class DC>
+inline Status FasterKv<K, V, D>::Delete(DC &context, AsyncCallback callback,
+                                        uint64_t monotonic_serial_num) {
+  typedef DC delete_context_t;
+  typedef PendingDeleteContext<DC> pending_delete_context_t;
+  pending_delete_context_t pending_context{ context, callback };
+  OperationStatus internal_status = InternalDelete(pending_context);
+  Status status;
+  if(internal_status == OperationStatus::SUCCESS) {
+    status = Status::Ok;
+  } else if(internal_status == OperationStatus::NOT_FOUND) {
+    status = Status::NotFound;
   } else {
     bool async;
     status = HandleOperationStatus(thread_ctx(), pending_context, internal_status, async);
@@ -1145,6 +1172,145 @@ inline OperationStatus FasterKv<K, V, D>::InternalRetryPendingRmw(
 }
 
 template <class K, class V, class D>
+template <class C>
+inline OperationStatus FasterKv<K, V, D>::InternalDelete(C &pending_context) {
+  typedef C pending_delete_context_t;
+
+  if(thread_ctx().phase != Phase::REST) {
+    HeavyEnter();
+  }
+
+  const key_t& key = pending_context.key();
+  KeyHash hash = key.GetHash();
+  const AtomicHashBucketEntry *atomic_entry = FindEntry(hash);
+  if(!atomic_entry) {
+    // no record found
+    return OperationStatus::NOT_FOUND;
+  }
+
+  HashBucketEntry entry = atomic_entry->load();
+  Address address = entry.address();
+  Address head_address = hlog.head_address.load();
+  Address read_only_address = hlog.read_only_address.load();
+  uint64_t latest_record_version = 0;
+
+  if(address >= read_only_address) {
+    // Multiple keys may share the same hash. Try to find the most recent record with a matching
+    // key that we might be able to update in place.
+    record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
+    latest_record_version = record->header.checkpoint_version;
+    if(key != record->key()) {
+      address = TraceBackForKeyMatch(key, record->header.previous_address(), head_address);
+    }
+  }
+
+  CheckpointLockGuard lock_guard{ checkpoint_locks_, hash };
+
+  if(thread_ctx().phase != Phase::REST) {
+    // Acquire necessary locks.
+    switch(thread_ctx().phase) {
+      case Phase::PREPARE:
+        // Working on old version (v).
+        if(!lock_guard.try_lock_old()) {
+          pending_context.go_async(thread_ctx().phase, thread_ctx().version, address, entry);
+          return OperationStatus::CPR_SHIFT_DETECTED;
+        } else {
+          if(latest_record_version > thread_ctx().version) {
+            // CPR shift detected: we are in the "PREPARE" phase, and a record has a version later than
+            // what we've seen.
+            pending_context.go_async(thread_ctx().phase, thread_ctx().version, address,
+                                     entry);
+            return OperationStatus::CPR_SHIFT_DETECTED;
+          }
+        }
+        break;
+      case Phase::IN_PROGRESS:
+        // All other threads are in phase {PREPARE,IN_PROGRESS,WAIT_PENDING}.
+        if(latest_record_version < thread_ctx().version) {
+          // Will create new record or update existing record to new version (v+1).
+          if(!lock_guard.try_lock_new()) {
+            pending_context.go_async(thread_ctx().phase, thread_ctx().version, address,
+                                     entry);
+            return OperationStatus::RETRY_LATER;
+          } else {
+            // Update to new version (v+1) requires RCU.
+            goto create_record;
+          }
+        }
+        break;
+      case Phase::WAIT_PENDING:
+        // All other threads are in phase {IN_PROGRESS,WAIT_PENDING,WAIT_FLUSH}.
+        if(latest_record_version < thread_ctx().version) {
+          if(lock_guard.old_locked()) {
+            pending_context.go_async(thread_ctx().phase, thread_ctx().version, address,
+                                     entry);
+            return OperationStatus::RETRY_LATER;
+          } else {
+            // Update to new version (v+1) requires RCU.
+            goto create_record;
+          }
+        }
+        break;
+      case Phase::WAIT_FLUSH:
+        // All other threads are in phase {WAIT_PENDING,WAIT_FLUSH,PERSISTENCE_CALLBACK}.
+        if(latest_record_version < thread_ctx().version) {
+          goto create_record;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* Not sure how to elide record
+  if(address >= read_only_address) {
+    // Mutable region; try to update hash chain and completely elide record
+    // only if previous address points to invalid address
+    record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
+    if (entry.address() == address && record->header.previous_address() < hlog.begin_address.load()) {
+      HashBucketEntry updated_entry{ record->header.previous_address(), 0, false };
+      if(atomic_entry->compare_exchange_strong(entry, updated_entry)) {
+        record->header.tombstone = true;
+        return OperationStatus::SUCCESS;
+      }
+    }
+  }
+  */
+
+  if(address >= read_only_address) {
+    // Mutable region; update in-place
+    record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
+    record->header.tombstone = true;
+    return OperationStatus::SUCCESS;
+  }
+
+create_record:
+  uint32_t record_size = record_t::size(key, 0);
+  Address new_address = BlockAllocate(record_size);
+  record_t* record = reinterpret_cast<record_t*>(hlog.Get(new_address));
+  new(record) record_t{
+          RecordInfo{
+                  static_cast<uint16_t>(thread_ctx().version), true, true, false,
+                  entry.address() },
+          key };
+
+  HashBucketEntry updated_entry{ new_address, hash.tag(), false };
+  HashBucketEntry expected_entry;
+  HashBucket* bucket;
+  AtomicHashBucketEntry* new_entry = FindOrCreateEntry(hash, expected_entry, bucket);
+
+  if(new_entry->compare_exchange_strong(expected_entry, updated_entry)) {
+    // Installed the new record in the hash table.
+    return OperationStatus::SUCCESS;
+  } else {
+    // Try again.
+    record->header.invalid = true;
+    return InternalDelete(pending_context);
+  }
+
+}
+
+template <class K, class V, class D>
 inline Address FasterKv<K, V, D>::TraceBackForKeyMatch(const key_t& key, Address from_address,
     Address min_offset) const {
   while(from_address >= min_offset) {
@@ -1182,6 +1348,12 @@ inline Status FasterKv<K, V, D>::HandleOperationStatus(ExecutionContext& ctx,
       async_pending_rmw_context_t& rmw_context =
         *static_cast<async_pending_rmw_context_t*>(&pending_context);
       internal_status = InternalRmw(rmw_context, false);
+      break;
+    }
+    case OperationType::Delete: {
+      async_pending_delete_context_t& delete_context =
+              *static_cast<async_pending_delete_context_t*>(&pending_context);
+      internal_status = InternalDelete(delete_context);
       break;
     }
     }
