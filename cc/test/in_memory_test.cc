@@ -199,6 +199,236 @@ TEST(InMemFaster, UpsertRead) {
   store.StopSession();
 }
 
+TEST(InMemFaster, UpsertDeleteRead) {
+  class alignas(2) Key {
+  public:
+      Key(uint8_t key)
+              : key_{ key } {
+      }
+
+      inline static constexpr uint32_t size() {
+        return static_cast<uint32_t>(sizeof(Key));
+      }
+      inline KeyHash GetHash() const {
+        std::hash<uint8_t> hash_fn;
+        return KeyHash{ hash_fn(key_) };
+      }
+
+      /// Comparison operators.
+      inline bool operator==(const Key& other) const {
+        return key_ == other.key_;
+      }
+      inline bool operator!=(const Key& other) const {
+        return key_ != other.key_;
+      }
+
+  private:
+      uint8_t key_;
+  };
+
+  class UpsertContext;
+  class ReadContext;
+
+  class Value {
+  public:
+      Value()
+              : value_{ 0 } {
+      }
+      Value(const Value& other)
+              : value_{ other.value_ } {
+      }
+      Value(uint8_t value)
+              : value_{ value } {
+      }
+
+      inline static constexpr uint32_t size() {
+        return static_cast<uint32_t>(sizeof(Value));
+      }
+
+      friend class UpsertContext;
+      friend class ReadContext;
+
+  private:
+      union {
+          uint8_t value_;
+          std::atomic<uint8_t> atomic_value_;
+      };
+  };
+
+  class UpsertContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef Value value_t;
+
+      UpsertContext(uint8_t key)
+              : key_{ key } {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      UpsertContext(const UpsertContext& other)
+              : key_{ other.key_ } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+      inline static constexpr uint32_t value_size() {
+        return sizeof(value_t);
+      }
+      /// Non-atomic and atomic Put() methods.
+      inline void Put(Value& value) {
+        value.value_ = 23;
+      }
+      inline bool PutAtomic(Value& value) {
+        value.atomic_value_.store(42);
+        return true;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+  };
+
+  class ReadContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef Value value_t;
+
+      ReadContext(uint8_t key)
+              : key_{ key }
+              , output{ 0 } {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      ReadContext(const ReadContext& other)
+              : key_{ other.key_ }
+              , output{ 0 } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+
+      inline void Get(const Value& value) {
+        // All reads should be atomic (from the mutable tail).
+        ASSERT_TRUE(false);
+      }
+      inline void GetAtomic(const Value& value) {
+        output = value.atomic_value_.load();
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+  public:
+      uint8_t output;
+  };
+
+  class DeleteContext : public IAsyncContext {
+  public:
+      typedef Key key_t;
+
+      DeleteContext(uint8_t key)
+      : key_ {key} {
+      }
+
+      /// Copy (and deep-copy) constructor.
+      DeleteContext(const DeleteContext& other)
+              : key_{ other.key_ } {
+      }
+
+      /// The implicit and explicit interfaces require a key() accessor.
+      inline const Key& key() const {
+        return key_;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      Key key_;
+  };
+
+  FasterKv<Key, Value, FASTER::device::NullDisk> store { 128, 1073741824, "" };
+
+  store.StartSession();
+
+  // Insert.
+  for(size_t idx = 0; idx < 256; ++idx) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        // In-memory test.
+        ASSERT_TRUE(false);
+    };
+    UpsertContext context{ static_cast<uint8_t>(idx) };
+    Status result = store.Upsert(context, callback, 1);
+    ASSERT_EQ(Status::Ok, result);
+  }
+  // Read.
+  for(size_t idx = 0; idx < 256; ++idx) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        // In-memory test.
+        ASSERT_TRUE(false);
+    };
+    ReadContext context{ static_cast<uint8_t>(idx) };
+    Status result = store.Read(context, callback, 1);
+    ASSERT_EQ(Status::Ok, result);
+    // All upserts should have inserts (non-atomic).
+    ASSERT_EQ(23, context.output);
+  }
+  // Delete.
+  for(size_t idx = 0; idx < 128; ++idx) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        // In-memory test.
+        ASSERT_TRUE(false);
+    };
+    DeleteContext context{ static_cast<uint8_t>(idx) };
+    Status result = store.Delete(context, callback, 1);
+    ASSERT_EQ(Status::Ok, result);
+  }
+
+  // Read again.
+  for(size_t idx = 0; idx < 128; ++idx) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        // In-memory test.
+        ASSERT_TRUE(false);
+    };
+    ReadContext context{ static_cast<uint8_t>(idx) };
+    Status result = store.Read(context, callback, 1);
+    ASSERT_EQ(Status::NotFound, result);
+    // All upserts should have updates (atomic).
+    ASSERT_EQ(0, context.output);
+  }
+
+  // Read again.
+  for(size_t idx = 128; idx < 256; ++idx) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        // In-memory test.
+        ASSERT_TRUE(false);
+    };
+    ReadContext context{ static_cast<uint8_t>(idx) };
+    Status result = store.Read(context, callback, 1);
+    ASSERT_EQ(Status::Ok, result);
+    // All upserts should have updates (atomic).
+    ASSERT_EQ(23, context.output);
+  }
+  store.StopSession();
+}
+
 /// The hash always returns "0," so the FASTER store devolves into a linked list.
 TEST(InMemFaster, UpsertRead_DummyHash) {
   class UpsertContext;
