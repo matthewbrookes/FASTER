@@ -22,6 +22,7 @@
 #include "guid.h"
 #include "hash_table.h"
 #include "internal_contexts.h"
+#include "iterator.h"
 #include "key_hash.h"
 #include "malloc_fixed_page_size.h"
 #include "persistent_memory_malloc.h"
@@ -161,6 +162,9 @@ class FasterKv {
     state_[resize_info_.version].DumpDistribution(
       overflow_buckets_allocator_[resize_info_.version]);
   }
+
+  /// Iterate
+  FasterIterator<K, V, D>* ScanInMemory();
 
  private:
   typedef Record<key_t, value_t> record_t;
@@ -2868,6 +2872,14 @@ bool FasterKv<K, V, D>::GrowIndex(GrowState::callback_t caller_callback) {
   return true;
 }
 
+template<class K, class V, class D>
+FasterIterator<K, V, D>* FasterKv<K, V, D>::ScanInMemory() {
+  Address head_address = hlog.head_address.load();
+  Address tail_address = hlog.GetTailAddress();
+  return new FasterIterator<K, V, D>(&hlog, head_address, tail_address);
+}
+
+
 // Some printing support for gtest
 std::ostream& operator << (std::ostream& out, const Status s) {
   return out << (uint8_t)s;
@@ -2879,7 +2891,5 @@ std::ostream& operator << (std::ostream& out, const Guid guid) {
 
 std::ostream& operator << (std::ostream& out, const FixedPageAddress address) {
   return out << address.control();
-}
-
 }
 } // namespace FASTER::core
