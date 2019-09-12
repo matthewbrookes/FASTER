@@ -16,6 +16,7 @@ set (FASTER_HEADERS
   core/hash_bucket.h
   core/hash_table.h
   core/internal_contexts.h
+  core/iterator.h
   core/key_hash.h
   core/light_epoch.h
   core/lss_allocator.h
