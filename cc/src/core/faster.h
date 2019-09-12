@@ -792,6 +792,13 @@ inline OperationStatus FasterKv<K, V, D>::InternalRead(C& pending_context) const
     break;
   }
 
+  if(address >= head_address) {
+    const record_t* record = reinterpret_cast<const record_t*>(hlog.Get(address));
+    if (record->header.tombstone) {
+      return OperationStatus::NOT_FOUND;
+    }
+  }
+
   if(address >= safe_read_only_address) {
     // Mutable or fuzzy region
     // concurrent read
@@ -848,12 +855,13 @@ inline OperationStatus FasterKv<K, V, D>::InternalUpsert(C& pending_context) {
   // The common case
   if(thread_ctx().phase == Phase::REST && address >= read_only_address) {
     record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
-    if(pending_context.PutAtomic(record)) {
-      return OperationStatus::SUCCESS;
-    } else {
-      // Must retry as RCU.
-      goto create_record;
+    if (!record->header.tombstone) {
+      if(pending_context.PutAtomic(record)) {
+        return OperationStatus::SUCCESS;
+      }
     }
+    // Must retry as RCU.
+    goto create_record;
   }
 
   // Acquire necessary locks.
@@ -918,13 +926,14 @@ inline OperationStatus FasterKv<K, V, D>::InternalUpsert(C& pending_context) {
     }
     // We acquired the necessary locks, so so we can update the record's bucket atomically.
     record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
-    if(pending_context.PutAtomic(record)) {
-      // Host successfully replaced record, atomically.
-      return OperationStatus::SUCCESS;
-    } else {
-      // Must retry as RCU.
-      goto create_record;
+    if (!record->header.tombstone) {
+      if(pending_context.PutAtomic(record)) {
+        // Host successfully replaced record, atomically.
+        return OperationStatus::SUCCESS;
+      }
     }
+    // Must retry as RCU.
+    goto create_record;
   }
 
   // Create a record and attempt RCU.
@@ -992,13 +1001,14 @@ inline OperationStatus FasterKv<K, V, D>::InternalRmw(C& pending_context, bool r
   // The common case.
   if(phase == Phase::REST && address >= read_only_address) {
     record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
-    if(pending_context.RmwAtomic(record)) {
-      // In-place RMW succeeded.
-      return OperationStatus::SUCCESS;
-    } else {
-      // Must retry as RCU.
-      goto create_record;
+    if(!record->header.tombstone) {
+      if(pending_context.RmwAtomic(record)) {
+        // In-place RMW succeeded.
+        return OperationStatus::SUCCESS;
+      }
     }
+    // Must retry as RCU.
+    goto create_record;
   }
 
   // Acquire necessary locks.
@@ -1073,13 +1083,14 @@ inline OperationStatus FasterKv<K, V, D>::InternalRmw(C& pending_context, bool r
     }
     // We acquired the necessary locks, so so we can update the record's bucket atomically.
     record_t* record = reinterpret_cast<record_t*>(hlog.Get(address));
-    if(pending_context.RmwAtomic(record)) {
-      // In-place RMW succeeded.
-      return OperationStatus::SUCCESS;
-    } else {
-      // Must retry as RCU.
-      goto create_record;
+    if (!record->header.tombstone) {
+      if(pending_context.RmwAtomic(record)) {
+        // In-place RMW succeeded.
+        return OperationStatus::SUCCESS;
+      }
     }
+    // Must retry as RCU.
+    goto create_record;
   } else if(address >= safe_read_only_address) {
     // Fuzzy Region: Must go pending due to lost-update anomaly
     if(!retrying) {
@@ -1538,6 +1549,9 @@ OperationStatus FasterKv<K, V, D>::InternalContinuePendingRead(ExecutionContext&
     async_pending_read_context_t* pending_context = static_cast<async_pending_read_context_t*>(
           io_context.caller_context);
     record_t* record = reinterpret_cast<record_t*>(io_context.record.GetValidPointer());
+    if (record->header.tombstone) {
+      return OperationStatus::NOT_FOUND;
+    }
     pending_context->Get(record);
     assert(!kCopyReadsToTail);
     return (thread_ctx().version > context.version) ? OperationStatus::SUCCESS_UNMARK :
