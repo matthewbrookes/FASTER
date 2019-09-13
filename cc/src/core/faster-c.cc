@@ -59,6 +59,16 @@ extern "C" {
         return memcmp(self_buffer, other_buffer, key_length_) != 0;
       }
 
+      inline uint8_t* clone() const {
+        uint8_t* clone = (uint8_t*) malloc(key_length_);
+        memcpy(clone, buffer(), key_length_);
+        return clone;
+      }
+
+      inline uint64_t length() const {
+        return key_length_;
+      }
+
     private:
       uint64_t key_length_;
       const uint8_t* temp_buffer_;
@@ -156,6 +166,16 @@ extern "C" {
 
     inline uint32_t size() const {
       return size_;
+    }
+
+    inline uint8_t* clone() const {
+      uint8_t* clone = (uint8_t*) malloc(length_);
+      memcpy(clone, buffer(), length_);
+      return clone;
+    }
+
+    inline uint64_t length() const {
+      return length_;
     }
 
     friend class ReadContext;
@@ -540,6 +560,51 @@ extern "C" {
         break;
     }
     return static_cast<uint8_t>(result);
+  }
+
+  void* faster_scan_in_memory_init(faster_t* faster_t) {
+    FasterIterator<Key, Value, disk_t>* iterator;
+    switch (faster_t->type) {
+      case NULL_DISK:
+        break;
+      case FILESYSTEM_DISK:
+        iterator = faster_t->obj.store->ScanInMemory();
+        break;
+    }
+    return iterator;
+  }
+
+  void faster_scan_in_memory_destroy(void* iterator) {
+    FasterIterator<Key, Value, disk_t>* fasterIterator = static_cast<FasterIterator<Key, Value, disk_t>*>(iterator);
+    delete(fasterIterator);
+  }
+
+  void* faster_scan_in_memory_record_init() {
+    return new FasterIteratorRecord<Key, Value, disk_t>();
+  }
+
+  void faster_scan_in_memory_record_destroy(void* record) {
+    FasterIteratorRecord<Key, Value, disk_t>* fasterRecord = static_cast<FasterIteratorRecord<Key, Value, disk_t>*>(record);
+    delete(fasterRecord);
+  }
+
+  faster_iterator_result* faster_iterator_get_next(void* iterator, void* record) {
+    FasterIterator<Key, Value, disk_t>* fasterIterator = static_cast<FasterIterator<Key, Value, disk_t>*>(iterator);
+    FasterIteratorRecord<Key, Value, disk_t>* fasterRecord = static_cast<FasterIteratorRecord<Key, Value, disk_t>*>(record);
+    bool status = fasterIterator->GetNext(fasterRecord);
+    faster_iterator_result* res = (faster_iterator_result*) malloc(sizeof(faster_iterator_result));
+    res->status = status;
+    res->key = fasterRecord->key()->clone();
+    res->key_length = fasterRecord->key()->length();
+    res->value = fasterRecord->value()->clone();
+    res->value_length = fasterRecord->value()->length();
+    return res;
+  }
+
+  void faster_iterator_result_destroy(faster_iterator_result* result) {
+    free(result->key);
+    free(result->value);
+    free(result);
   }
 
   // It is up to the caller to dealloc faster_checkpoint_result*

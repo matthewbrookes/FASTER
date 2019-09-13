@@ -48,6 +48,15 @@ extern "C" {
     char* session_ids;
   };
 
+  typedef struct faster_iterator_result faster_iterator_result;
+  struct faster_iterator_result {
+      bool status;
+      uint8_t* key;
+      uint64_t key_length;
+      uint8_t* value;
+      uint64_t value_length;
+  };
+
   // Thread-related operations
   const char* faster_start_session(faster_t* faster_t);
   uint64_t faster_continue_session(faster_t* faster_t, const char* token);
@@ -72,6 +81,12 @@ extern "C" {
                        const uint64_t monotonic_serial_number, read_callback cb, void* target);
   uint8_t faster_delete(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                         const uint64_t monotonic_serial_number);
+  void* faster_scan_in_memory_init(faster_t* faster_t);
+  void faster_scan_in_memory_destroy(void* iterator);
+  void* faster_scan_in_memory_record_init();
+  void faster_scan_in_memory_record_destroy(void* record);
+  faster_iterator_result* faster_iterator_get_next(void* iterator, void* record);
+  void faster_iterator_result_destroy(faster_iterator_result* result);
   void faster_destroy(faster_t* faster_t);
   bool faster_grow_index(faster_t* faster_t);
 
