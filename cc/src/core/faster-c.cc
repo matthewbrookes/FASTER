@@ -397,6 +397,33 @@ extern "C" {
     uint64_t new_length_;
   };
 
+  class DeleteContext: public IAsyncContext {
+  public:
+      typedef Key key_t;
+      typedef Value value_t;
+
+      DeleteContext(const uint8_t* key, const uint64_t key_length)
+      : key_ { key, key_length } {
+      }
+
+      DeleteContext(const DeleteContext& other)
+      : key_ { other.key_ } {
+      }
+
+      inline const Key& key() const {
+        return key_;
+      }
+
+  protected:
+      /// The explicit interface requires a DeepCopy_Internal() implementation.
+      Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+        return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+      }
+
+  private:
+      const key_t key_;
+  };
+
   enum store_type {
       NULL_DISK,
       FILESYSTEM_DISK,
@@ -494,6 +521,25 @@ extern "C" {
       cb(target, NULL, 0, NotFound);
     }
 
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_delete(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, const uint64_t monotonic_serial_number) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        CallbackContext<DeleteContext> context { ctxt };
+        assert(result == Status::Ok);
+    };
+
+    DeleteContext context { key, key_length };
+    Status result;
+    switch (faster_t->type) {
+      case NULL_DISK:
+        result = faster_t->obj.null_store->Delete(context, callback, monotonic_serial_number);
+        break;
+      case FILESYSTEM_DISK:
+        result = faster_t->obj.store->Delete(context, callback, monotonic_serial_number);
+        break;
+    }
     return static_cast<uint8_t>(result);
   }
 
