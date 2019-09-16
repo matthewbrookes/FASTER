@@ -239,6 +239,30 @@ extern "C" {
       person_t person_;
   };
 
+class AuctionsValue {
+public:
+    AuctionsValue()
+            : length_{ 0 } {
+    }
+
+    inline uint32_t size() const {
+      return length_ * sizeof(uint64_t);
+    }
+
+    friend class ReadAuctionsContext;
+    friend class RmwAuctionsContext;
+
+private:
+    uint64_t length_;
+
+    inline const uint64_t* buffer() const {
+      return reinterpret_cast<const uint64_t*>(this + 1);
+    }
+    inline uint64_t* buffer() {
+      return reinterpret_cast<uint64_t*>(this + 1);
+    }
+};
+
   class ReadContext : public IAsyncContext {
   public:
     typedef Key key_t;
@@ -341,6 +365,53 @@ protected:
 private:
     key_t key_;
     read_person_callback cb_;
+    void* target_;
+};
+
+class ReadAuctionsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef AuctionsValue value_t;
+
+    ReadAuctionsContext(const key_t& key, read_auctions_callback cb, void* target)
+            : key_{ key }
+            , cb_ { cb }
+            , target_ { target }  {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    ReadAuctionsContext(const ReadAuctionsContext& other)
+            : key_{ other.key_ }
+            , cb_ { other.cb_ }
+            , target_ { other.target_ }  {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+
+    inline void Get(const value_t& value) {
+      cb_(target_, value.buffer(), value.length_, Ok);
+    }
+    inline void GetAtomic(const value_t& value) {
+      cb_(target_, value.buffer(), value.length_, Ok);
+    }
+
+    /// For async reads returning not found
+    inline void ReturnNotFound() {
+      cb_(target_, NULL, 0, NotFound);
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    read_auctions_callback cb_;
     void* target_;
 };
 
@@ -551,6 +622,58 @@ private:
     uint64_t new_length_;
   };
 
+class RmwAuctionsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef AuctionsValue value_t;
+
+    RmwAuctionsContext(const uint64_t key, const uint64_t modification)
+            : key_{ key }
+            , modification_{ modification } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    RmwAuctionsContext(RmwAuctionsContext& other)
+            : key_{ other.key_ }
+            , modification_{ other.modification_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + sizeof(uint64_t);
+    }
+    inline uint32_t value_size(const value_t& old_value) {
+      return sizeof(value_t) + (old_value.length_ + 1) * sizeof(uint64_t);
+    }
+
+    inline void RmwInitial(value_t& value) {
+      value.length_ = 1;
+      std::memcpy(value.buffer(), &modification_, sizeof(uint64_t));
+    }
+    inline void RmwCopy(const value_t& old_value, value_t& value) {
+      value.length_ = old_value.length_ + 1;
+      std::memcpy(value.buffer(), old_value.buffer(), old_value.length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer() + old_value.length_, &modification_, sizeof(uint64_t));
+    }
+    inline bool RmwAtomic(value_t& value) {
+      // Value always grows so no in-place possible
+      return false;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    const uint64_t modification_;
+};
+
   class DeleteContext: public IAsyncContext {
   public:
       typedef Key key_t;
@@ -590,11 +713,13 @@ private:
   using store_t = FasterKv<Key, Value, disk_t>;
   using null_store_t = FasterKv<Key, Value, disk_null_t>;
   using store_people_t = FasterKv<U64Key, PersonValue, disk_t>;
+  using store_auctions_t = FasterKv<U64Key, AuctionsValue, disk_t>;
   struct faster_t {
       union {
           store_t* store;
           null_store_t* null_store;
           store_people_t* people_store;
+          store_auctions_t* auctions_store;
       } obj;
       store_type type;
   };
@@ -618,6 +743,14 @@ private:
     faster_t* res = new faster_t();
     std::experimental::filesystem::create_directory(storage);
     res->obj.people_store= new store_people_t { table_size, log_size, storage };
+    res->type = FILESYSTEM_DISK;
+    return res;
+  }
+
+  faster_t* faster_open_with_disk_auctions(const uint64_t table_size, const uint64_t log_size, const char* storage) {
+    faster_t* res = new faster_t();
+    std::experimental::filesystem::create_directory(storage);
+    res->obj.auctions_store= new store_auctions_t { table_size, log_size, storage };
     res->type = FILESYSTEM_DISK;
     return res;
   }
@@ -667,6 +800,16 @@ uint8_t faster_upsert_person(faster_t* faster_t, const uint64_t key, person_t pe
         result = faster_t->obj.store->Rmw(context, callback, monotonic_serial_number);
         break;
     }
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_rmw_auction(faster_t* faster_t, const uint64_t key, const uint64_t modification, const uint64_t monotonic_serial_number) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
+        CallbackContext<RmwAuctionsContext> context { ctxt };
+    };
+
+    RmwAuctionsContext context{ key, modification };
+    Status result = faster_t->obj.auctions_store->Rmw(context, callback, monotonic_serial_number);
     return static_cast<uint8_t>(result);
   }
 
@@ -774,6 +917,24 @@ uint8_t faster_read_person(faster_t* faster_t, const uint64_t key, const uint64_
 
   if (result == Status::NotFound) {
     cb(target, NULL, NotFound);
+  }
+
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_auctions_callback cb, void* target) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<ReadAuctionsContext> context { ctxt };
+      if (result == Status::NotFound) {
+        context->ReturnNotFound();
+      }
+  };
+
+  ReadAuctionsContext context {key, cb, target};
+  Status result = faster_t->obj.auctions_store->Read(context, callback, monotonic_serial_number);
+
+  if (result == Status::NotFound) {
+    cb(target, NULL, 0, NotFound);
   }
 
   return static_cast<uint8_t>(result);
