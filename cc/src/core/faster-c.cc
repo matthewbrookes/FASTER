@@ -4,6 +4,7 @@
 
 #include "faster.h"
 #include "faster-c.h"
+#include "nexmark.h"
 #include "device/file_system_disk.h"
 #include "device/null_disk.h"
 
@@ -81,8 +82,35 @@ extern "C" {
       }
   };
 
+  class U64Key {
+    public:
+      U64Key(uint64_t key)
+      : key_{ key } {
+      }
+
+      inline static constexpr uint32_t size() {
+        return static_cast<uint32_t>(sizeof(U64Key));
+      }
+      inline KeyHash GetHash() const {
+        return KeyHash{ Utility::GetHashCode(key_) };
+      }
+
+      /// Comparison operators.
+      inline bool operator==(const U64Key& other) const {
+        return key_ == other.key_;
+      }
+      inline bool operator!=(const U64Key& other) const {
+        return key_ != other.key_;
+      }
+
+    private:
+      uint64_t key_;
+  };
+
   class ReadContext;
+  class ReadPersonContext;
   class UpsertContext;
+  class UpsertPersonContext;
   class RmwContext;
 
   class GenLock {
@@ -195,6 +223,22 @@ extern "C" {
     }
   };
 
+  class PersonValue {
+  public:
+      PersonValue(person_t person)
+      : person_{ person } {
+      }
+
+      inline uint32_t size() const {
+        return sizeof(person_t);
+      }
+
+      friend class ReadPersonContext;
+      friend class UpsertPersonContext;
+  private:
+      person_t person_;
+  };
+
   class ReadContext : public IAsyncContext {
   public:
     typedef Key key_t;
@@ -252,6 +296,53 @@ extern "C" {
     read_callback cb_;
     void* target_;
   };
+
+class ReadPersonContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef PersonValue value_t;
+
+    ReadPersonContext(const key_t& key, read_person_callback cb, void* target)
+            : key_{ key }
+            , cb_ { cb }
+            , target_ { target }  {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    ReadPersonContext(const ReadPersonContext& other)
+            : key_{ other.key_ }
+            , cb_ { other.cb_ }
+            , target_ { other.target_ }  {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+
+    inline void Get(const value_t& value) {
+      cb_(target_, &value.person_, Ok);
+    }
+    inline void GetAtomic(const value_t& value) {
+      cb_(target_, &value.person_, Ok);
+    }
+
+    /// For async reads returning not found
+    inline void ReturnNotFound() {
+      cb_(target_, NULL, NotFound);
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    read_person_callback cb_;
+    void* target_;
+};
 
   class UpsertContext : public IAsyncContext {
   public:
@@ -324,6 +415,49 @@ extern "C" {
     uint8_t* input_;
     uint64_t length_;
   };
+
+class UpsertPersonContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef PersonValue value_t;
+
+    UpsertPersonContext(const key_t& key, const person_t input)
+            : key_{ key }
+            , input_{ input } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    UpsertPersonContext(UpsertPersonContext& other)
+            : key_{ other.key_ }
+            , input_{ other.input_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t);
+    }
+    /// Non-atomic and atomic Put() methods.
+    inline void Put(value_t& value) {
+      value.person_ = input_;
+    }
+    inline bool PutAtomic(value_t& value) {
+      value.person_ = input_;
+      return true;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    person_t input_;
+};
 
   class RmwContext : public IAsyncContext {
   public:
@@ -455,10 +589,12 @@ extern "C" {
   typedef FASTER::device::NullDisk  disk_null_t;
   using store_t = FasterKv<Key, Value, disk_t>;
   using null_store_t = FasterKv<Key, Value, disk_null_t>;
+  using store_people_t = FasterKv<U64Key, PersonValue, disk_t>;
   struct faster_t {
       union {
           store_t* store;
           null_store_t* null_store;
+          store_people_t* people_store;
       } obj;
       store_type type;
   };
@@ -474,6 +610,14 @@ extern "C" {
     faster_t* res = new faster_t();
     std::experimental::filesystem::create_directory(storage);
     res->obj.store= new store_t { table_size, log_size, storage };
+    res->type = FILESYSTEM_DISK;
+    return res;
+  }
+
+  faster_t* faster_open_with_disk_people(const uint64_t table_size, const uint64_t log_size, const char* storage) {
+    faster_t* res = new faster_t();
+    std::experimental::filesystem::create_directory(storage);
+    res->obj.people_store= new store_people_t { table_size, log_size, storage };
     res->type = FILESYSTEM_DISK;
     return res;
   }
@@ -496,6 +640,16 @@ extern "C" {
     }
     return static_cast<uint8_t>(result);
   }
+
+uint8_t faster_upsert_person(faster_t* faster_t, const uint64_t key, person_t person, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      assert(result == Status::Ok);
+  };
+
+  UpsertPersonContext context { key, person };
+  Status result = faster_t->obj.people_store->Upsert(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
 
   uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, uint8_t* modification,
                      const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb) {
@@ -606,6 +760,24 @@ extern "C" {
     free(result->value);
     free(result);
   }
+
+uint8_t faster_read_person(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_person_callback cb, void* target) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<ReadPersonContext> context { ctxt };
+      if (result == Status::NotFound) {
+        context->ReturnNotFound();
+      }
+  };
+
+  ReadPersonContext context {key, cb, target};
+  Status result = faster_t->obj.people_store->Read(context, callback, monotonic_serial_number);
+
+  if (result == Status::NotFound) {
+    cb(target, NULL, NotFound);
+  }
+
+  return static_cast<uint8_t>(result);
+}
 
   // It is up to the caller to dealloc faster_checkpoint_result*
   // first token, then struct

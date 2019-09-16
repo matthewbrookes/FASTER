@@ -21,6 +21,7 @@ set (FASTER_HEADERS
   core/light_epoch.h
   core/lss_allocator.h
   core/malloc_fixed_page_size.h
+  core/nexmark.h
   core/native_buffer_pool.h
   core/persistent_memory_malloc.h
   core/phase.h
