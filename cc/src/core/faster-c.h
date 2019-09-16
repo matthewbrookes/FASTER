@@ -69,6 +69,14 @@ extern "C" {
       uint64_t value;
   };
 
+typedef struct faster_iterator_result_u64_pair faster_iterator_result_u64_pair;
+struct faster_iterator_result_u64_pair {
+    bool status;
+    uint64_t key;
+    uint64_t left;
+    uint64_t right;
+};
+
   // Thread-related operations
   const char* faster_start_session(faster_t* faster_t);
   uint64_t faster_continue_session(faster_t* faster_t, const char* token);
@@ -116,16 +124,22 @@ extern "C" {
   uint8_t faster_delete_u64(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
   void* faster_scan_in_memory_init(faster_t* faster_t);
   void* faster_scan_in_memory_init_u64(faster_t* faster_t);
+void* faster_scan_in_memory_init_u64_pair(faster_t* faster_t);
   void faster_scan_in_memory_destroy(void* iterator);
   void faster_scan_in_memory_destroy_u64(void* iterator);
+void faster_scan_in_memory_destroy_u64_pair(void* iterator);
   void* faster_scan_in_memory_record_init();
   void* faster_scan_in_memory_record_init_u64();
+void* faster_scan_in_memory_record_init_u64_pair();
   void faster_scan_in_memory_record_destroy(void* record);
   void faster_scan_in_memory_record_destroy_u64(void* record);
+void faster_scan_in_memory_record_destroy_u64_pair(void* record);
   faster_iterator_result* faster_iterator_get_next(void* iterator, void* record);
   faster_iterator_result_u64* faster_iterator_get_next_u64(void* iterator, void* record);
+faster_iterator_result_u64_pair* faster_iterator_get_next_u64_pair(void* iterator, void* record);
   void faster_iterator_result_destroy(faster_iterator_result* result);
   void faster_iterator_result_destroy_u64(faster_iterator_result_u64* result);
+  void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* result);
   void faster_destroy(faster_t* faster_t);
   bool faster_grow_index(faster_t* faster_t);
 

@@ -337,6 +337,14 @@ public:
       return sizeof(U64PairValue);
     }
 
+    inline uint64_t left() const {
+      return left_;
+    }
+
+    inline uint64_t right() const {
+      return right_;
+    }
+
     friend class UpsertU64PairContext;
     friend class ReadU64PairContext;
     friend class RmwU64PairContext;
@@ -1633,8 +1641,11 @@ void* faster_scan_in_memory_init(faster_t* faster_t) {
 }
 
 void* faster_scan_in_memory_init_u64(faster_t* faster_t) {
-  FasterIterator<U64Key, U64Value, disk_t>* iterator;
   return faster_t->obj.u64_store->ScanInMemory();
+}
+
+void* faster_scan_in_memory_init_u64_pair(faster_t* faster_t) {
+  return faster_t->obj.u64_pair_store->ScanInMemory();
 }
 
 void faster_scan_in_memory_destroy(void* iterator) {
@@ -1647,12 +1658,21 @@ void faster_scan_in_memory_destroy_u64(void* iterator) {
   delete(fasterIterator);
 }
 
+void faster_scan_in_memory_destroy_u64_pair(void* iterator) {
+  FasterIterator<U64Key, U64PairValue, disk_t>* fasterIterator = static_cast<FasterIterator<U64Key, U64PairValue, disk_t>*>(iterator);
+  delete(fasterIterator);
+}
+
 void* faster_scan_in_memory_record_init() {
   return new FasterIteratorRecord<Key, Value, disk_t>();
 }
 
 void* faster_scan_in_memory_record_init_u64() {
   return new FasterIteratorRecord<U64Key, U64Value, disk_t>();
+}
+
+void* faster_scan_in_memory_record_init_u64_pair() {
+  return new FasterIteratorRecord<U64Key, U64PairValue, disk_t>();
 }
 
 void faster_scan_in_memory_record_destroy(void* record) {
@@ -1662,6 +1682,11 @@ void faster_scan_in_memory_record_destroy(void* record) {
 
 void faster_scan_in_memory_record_destroy_u64(void* record) {
   FasterIteratorRecord<U64Key, U64Value, disk_t>* fasterRecord = static_cast<FasterIteratorRecord<U64Key, U64Value, disk_t>*>(record);
+  delete(fasterRecord);
+}
+
+void faster_scan_in_memory_record_destroy_u64_pair(void* record) {
+  FasterIteratorRecord<U64Key, U64PairValue, disk_t>* fasterRecord = static_cast<FasterIteratorRecord<U64Key, U64PairValue, disk_t>*>(record);
   delete(fasterRecord);
 }
 
@@ -1689,6 +1714,20 @@ faster_iterator_result_u64* faster_iterator_get_next_u64(void* iterator, void* r
   return res;
 }
 
+faster_iterator_result_u64_pair* faster_iterator_get_next_u64_pair(void* iterator, void* record) {
+  FasterIterator<U64Key, U64PairValue, disk_t>* fasterIterator = static_cast<FasterIterator<U64Key, U64PairValue, disk_t>*>(iterator);
+  FasterIteratorRecord<U64Key, U64PairValue, disk_t>* fasterRecord = static_cast<FasterIteratorRecord<U64Key, U64PairValue, disk_t>*>(record);
+  bool status = fasterIterator->GetNext(fasterRecord);
+  faster_iterator_result_u64_pair* res = (faster_iterator_result_u64_pair*) malloc(sizeof(faster_iterator_result));
+  res->status = status;
+  if (status) {
+    res->key = fasterRecord->key()->key();
+    res->left = fasterRecord->value()->left();
+    res->right = fasterRecord->value()->right();
+  }
+  return res;
+}
+
 void faster_iterator_result_destroy(faster_iterator_result* result) {
   free(result->key);
   free(result->value);
@@ -1696,6 +1735,10 @@ void faster_iterator_result_destroy(faster_iterator_result* result) {
 }
 
 void faster_iterator_result_destroy_u64(faster_iterator_result_u64* result) {
+  free(result);
+}
+
+void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* result) {
   free(result);
 }
 
