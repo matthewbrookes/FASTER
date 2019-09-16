@@ -99,6 +99,7 @@ extern "C" {
   uint8_t faster_rmw_auctions(faster_t* faster_t, const uint64_t key, uint64_t* modification,
                               uint64_t length, const uint64_t monotonic_serial_number);
   uint8_t faster_rmw_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number);
+  uint8_t faster_rmw_decrease_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number);
   uint8_t faster_read(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                        const uint64_t monotonic_serial_number, read_callback cb, void* target);
   uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number,

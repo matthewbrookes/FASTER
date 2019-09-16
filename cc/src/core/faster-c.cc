@@ -121,6 +121,7 @@ extern "C" {
   class UpsertU64Context;
   class RmwContext;
   class RmwU64Context;
+  class RmwDecreaseU64Context;
 
   class GenLock {
   public:
@@ -320,6 +321,7 @@ public:
     friend class UpsertU64Context;
     friend class ReadU64Context;
     friend class RmwU64Context;
+    friend class RmwDecreaseU64Context;
 private:
     uint64_t value_;
 };
@@ -1008,6 +1010,55 @@ private:
     uint64_t modification_;
 };
 
+class RmwDecreaseU64Context : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef U64Value value_t;
+
+    RmwDecreaseU64Context(const uint64_t key, uint64_t modification)
+            : key_{ key }
+            , modification_{ modification } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    RmwDecreaseU64Context(RmwDecreaseU64Context& other)
+            : key_{ other.key_ }
+            , modification_{ other.modification_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t);
+    }
+    inline uint32_t value_size(const value_t& old_value) const {
+      return sizeof(value_t);
+    }
+
+    inline void RmwInitial(value_t& value) {
+      value.value_ = -modification_;
+    }
+    inline void RmwCopy(const value_t& old_value, value_t& value) {
+      value.value_ = old_value.value_ - modification_;
+    }
+    inline bool RmwAtomic(value_t& value) {
+      value.value_ -= modification_;
+      return true;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    uint64_t modification_;
+};
+
   class DeleteContext: public IAsyncContext {
   public:
       typedef Key key_t;
@@ -1223,6 +1274,16 @@ uint8_t faster_rmw_u64(faster_t* faster_t, const uint64_t key, uint64_t modifica
   };
 
   RmwU64Context context{ key, modification };
+  Status result = faster_t->obj.u64_store->Rmw(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_rmw_decrease_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<RmwU64Context> context { ctxt };
+  };
+
+  RmwDecreaseU64Context context{ key, modification };
   Status result = faster_t->obj.u64_store->Rmw(context, callback, monotonic_serial_number);
   return static_cast<uint8_t>(result);
 }
