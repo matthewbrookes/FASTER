@@ -81,10 +81,13 @@ extern "C" {
   uint8_t faster_upsert(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                         uint8_t* value, uint64_t value_length, const uint64_t monotonic_serial_number);
   uint8_t faster_upsert_person(faster_t* faster_t, const uint64_t key, person_t person, const uint64_t monotonic_serial_number);
+  uint8_t faster_upsert_auctions(faster_t* faster_t, const uint64_t key, uint64_t* input, uint64_t length, const uint64_t monotonic_serial_number);
   uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, uint8_t* modification,
                      const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb);
   uint8_t faster_rmw_auction(faster_t* faster_t, const uint64_t key,
                              const uint64_t modification, const uint64_t monotonic_serial_number);
+  uint8_t faster_rmw_auctions(faster_t* faster_t, const uint64_t key, uint64_t* modification,
+                              uint64_t length, const uint64_t monotonic_serial_number);
   uint8_t faster_read(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                        const uint64_t monotonic_serial_number, read_callback cb, void* target);
   uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number,

@@ -92,9 +92,11 @@ extern "C" {
   void deallocate_vec(uint8_t* vec, uint64_t length) {
     delete[] vec;
   }
-}
 
-extern "C" {
+  void deallocate_u64_vec(uint64_t* vec, uint64_t length) {
+    delete[] vec;
+  }
+
   void deallocate_string(char* str) {
     free(str);
   }

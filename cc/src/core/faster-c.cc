@@ -11,6 +11,7 @@
 extern "C" {
 
   void deallocate_vec(uint8_t*, uint64_t);
+  void deallocate_u64_vec(uint64_t*, uint64_t);
   void deallocate_string(char*);
 
   class Key {
@@ -279,6 +280,8 @@ public:
     }
 
     friend class ReadAuctionsContext;
+    friend class UpsertAuctionsContext;
+    friend class RmwAuctionContext;
     friend class RmwAuctionsContext;
 
 private:
@@ -583,6 +586,59 @@ private:
     person_t input_;
 };
 
+class UpsertAuctionsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef AuctionsValue value_t;
+
+    UpsertAuctionsContext(const key_t& key, uint64_t* input, uint64_t length)
+            : key_{ key }
+            , input_{ input }
+            , length_{ length } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    UpsertAuctionsContext(UpsertAuctionsContext& other)
+            : key_{ other.key_ }
+            , input_{ other.input_ }
+            , length_{ other.length_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + length_ * sizeof(uint64_t);
+    }
+    /// Non-atomic and atomic Put() methods.
+    inline void Put(value_t& value) {
+      value.length_ = length_;
+      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      deallocate_u64_vec(input_, length_);
+    }
+    inline bool PutAtomic(value_t& value) {
+      if (value.length_ < length_) {
+        return false;
+      }
+      value.length_ = length_;
+      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      deallocate_u64_vec(input_, length_);
+      return true;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    uint64_t* input_;
+    uint64_t length_;
+};
+
   class RmwContext : public IAsyncContext {
   public:
     typedef Key key_t;
@@ -675,18 +731,18 @@ private:
     uint64_t new_length_;
   };
 
-class RmwAuctionsContext : public IAsyncContext {
+class RmwAuctionContext : public IAsyncContext {
 public:
     typedef U64Key key_t;
     typedef AuctionsValue value_t;
 
-    RmwAuctionsContext(const uint64_t key, const uint64_t modification)
+    RmwAuctionContext(const uint64_t key, const uint64_t modification)
             : key_{ key }
             , modification_{ modification } {
     }
 
     /// Copy (and deep-copy) constructor.
-    RmwAuctionsContext(RmwAuctionsContext& other)
+    RmwAuctionContext(RmwAuctionContext& other)
             : key_{ other.key_ }
             , modification_{ other.modification_ } {
     }
@@ -727,6 +783,63 @@ private:
     const uint64_t modification_;
 };
 
+class RmwAuctionsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef AuctionsValue value_t;
+
+    RmwAuctionsContext(const uint64_t key, uint64_t* modification, uint64_t length)
+            : key_{ key }
+            , modification_{ modification }
+            , length_{ length }{
+    }
+
+    /// Copy (and deep-copy) constructor.
+    RmwAuctionsContext(RmwAuctionsContext& other)
+            : key_{ other.key_ }
+            , modification_{ other.modification_ }
+            , length_{ other.length_ }{
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + sizeof(uint64_t);
+    }
+    inline uint32_t value_size(const value_t& old_value) {
+      return sizeof(value_t) + (old_value.length_ + length_) * sizeof(uint64_t);
+    }
+
+    inline void RmwInitial(value_t& value) {
+      value.length_ = length_;
+      std::memcpy(value.buffer(), &modification_, length_ * sizeof(uint64_t));
+      deallocate_u64_vec(modification_, length_);
+    }
+    inline void RmwCopy(const value_t& old_value, value_t& value) {
+      value.length_ = old_value.length_ + length_;
+      std::memcpy(value.buffer(), old_value.buffer(), old_value.length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer() + old_value.length_, modification_, length_ * sizeof(uint64_t));
+      deallocate_u64_vec(modification_, length_);
+    }
+    inline bool RmwAtomic(value_t& value) {
+      // Value always grows so no in-place possible
+      return false;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    uint64_t* modification_;
+    uint64_t length_;
+};
+
   class DeleteContext: public IAsyncContext {
   public:
       typedef Key key_t;
@@ -757,6 +870,8 @@ private:
   enum store_type {
       NULL_DISK,
       FILESYSTEM_DISK,
+      PERSON_STORE,
+      AUCTIONS_STORE,
   };
   typedef enum store_type store_type;
 
@@ -796,7 +911,7 @@ private:
     faster_t* res = new faster_t();
     std::experimental::filesystem::create_directory(storage);
     res->obj.people_store= new store_people_t { table_size, log_size, storage };
-    res->type = FILESYSTEM_DISK;
+    res->type = PERSON_STORE;
     return res;
   }
 
@@ -804,7 +919,7 @@ private:
     faster_t* res = new faster_t();
     std::experimental::filesystem::create_directory(storage);
     res->obj.auctions_store= new store_auctions_t { table_size, log_size, storage };
-    res->type = FILESYSTEM_DISK;
+    res->type = AUCTIONS_STORE;
     return res;
   }
 
@@ -837,6 +952,16 @@ uint8_t faster_upsert_person(faster_t* faster_t, const uint64_t key, person_t pe
   return static_cast<uint8_t>(result);
 }
 
+uint8_t faster_upsert_auctions(faster_t* faster_t, const uint64_t key, uint64_t* input, uint64_t length, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      assert(result == Status::Ok);
+  };
+
+  UpsertAuctionsContext context { key, input, length };
+  Status result = faster_t->obj.auctions_store->Upsert(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
   uint8_t faster_rmw(faster_t* faster_t, const uint8_t* key, const uint64_t key_length, uint8_t* modification,
                      const uint64_t length, const uint64_t monotonic_serial_number, rmw_callback cb) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
@@ -858,10 +983,20 @@ uint8_t faster_upsert_person(faster_t* faster_t, const uint64_t key, person_t pe
 
   uint8_t faster_rmw_auction(faster_t* faster_t, const uint64_t key, const uint64_t modification, const uint64_t monotonic_serial_number) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
+        CallbackContext<RmwAuctionContext> context { ctxt };
+    };
+
+    RmwAuctionContext context{ key, modification };
+    Status result = faster_t->obj.auctions_store->Rmw(context, callback, monotonic_serial_number);
+    return static_cast<uint8_t>(result);
+  }
+
+  uint8_t faster_rmw_auctions(faster_t* faster_t, const uint64_t key, uint64_t* modification, uint64_t length, const uint64_t monotonic_serial_number) {
+    auto callback = [](IAsyncContext* ctxt, Status result) {
         CallbackContext<RmwAuctionsContext> context { ctxt };
     };
 
-    RmwAuctionsContext context{ key, modification };
+    RmwAuctionsContext context{ key, modification, length };
     Status result = faster_t->obj.auctions_store->Rmw(context, callback, monotonic_serial_number);
     return static_cast<uint8_t>(result);
   }
@@ -1089,6 +1224,10 @@ uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint6
           return faster_t->obj.null_store->Size();
         case FILESYSTEM_DISK:
           return faster_t->obj.store->Size();
+        case PERSON_STORE:
+          return faster_t->obj.people_store->Size();
+        case AUCTIONS_STORE:
+          return faster_t->obj.auctions_store->Size();
       }
     }
   }
@@ -1145,6 +1284,12 @@ uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint6
         case FILESYSTEM_DISK:
           faster_t->obj.store->CompletePending(b);
           break;
+        case PERSON_STORE:
+          faster_t->obj.people_store->CompletePending(b);
+          break;
+        case AUCTIONS_STORE:
+          faster_t->obj.auctions_store->CompletePending(b);
+          break;
       }
     }
   }
@@ -1162,6 +1307,12 @@ uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint6
           break;
         case FILESYSTEM_DISK:
           guid = faster_t->obj.store->StartSession();
+          break;
+        case PERSON_STORE:
+          guid = faster_t->obj.people_store->StartSession();
+          break;
+        case AUCTIONS_STORE:
+          guid = faster_t->obj.auctions_store->StartSession();
           break;
       }
       char* str = new char[37];
@@ -1207,6 +1358,12 @@ uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint6
           break;
         case FILESYSTEM_DISK:
           faster_t->obj.store->Refresh();
+          break;
+        case PERSON_STORE:
+          faster_t->obj.people_store->Refresh();
+          break;
+        case AUCTIONS_STORE:
+          faster_t->obj.auctions_store->Refresh();
           break;
       }
     }
