@@ -585,10 +585,10 @@ public:
     }
 
     inline void Get(const value_t& value) {
-      cb_(target_, value.left_, value.right_, Ok);
+      cb_(target_, (uint64_t*)&value.left_, (uint64_t*)&value.right_, Ok);
     }
     inline void GetAtomic(const value_t& value) {
-      cb_(target_, value.left_, value.right_, Ok);
+      cb_(target_, (uint64_t*)&value.left_, (uint64_t*)&value.right_, Ok);
     }
 
     /// For async reads returning not found
@@ -1592,7 +1592,7 @@ uint8_t faster_read_u64_pair(faster_t* faster_t, const uint64_t key, const uint6
   Status result = faster_t->obj.u64_pair_store->Read(context, callback, monotonic_serial_number);
 
   if (result == Status::NotFound) {
-    cb(target, 0, 0, NotFound);
+    cb(target, NULL, NULL, NotFound);
   }
 
   return static_cast<uint8_t>(result);

@@ -36,7 +36,7 @@ extern "C" {
   typedef void (*read_person_callback)(void*, const person_t, faster_status);
   typedef void (*read_auctions_callback)(void*, const uint64_t*, uint64_t, faster_status);
   typedef void (*read_u64_callback)(void*, const uint64_t, faster_status);
-  typedef void (*read_u64_pair_callback)(void*, const uint64_t, const uint64_t, faster_status);
+  typedef void (*read_u64_pair_callback)(void*, uint64_t*, uint64_t*, faster_status);
   typedef uint64_t (*rmw_callback)(const uint8_t*, uint64_t, uint8_t*, uint64_t, uint8_t*);
 
   typedef struct faster_checkpoint_result faster_checkpoint_result;
