@@ -354,6 +354,30 @@ private:
     uint64_t right_;
 };
 
+class TenElementsValue : public IAsyncContext {
+public:
+    TenElementsValue()
+    : length_ { 0 }
+    , tail_ { 0 } {
+    }
+
+    inline uint32_t size() const {
+      return sizeof(TenElementsValue) + 10 * sizeof(size_t);
+    }
+
+    friend class RmwTenElementsContext;
+    friend class ReadTenElementsContext;
+private:
+    uint8_t length_;
+    uint8_t tail_;
+    inline const size_t* buffer() const {
+      return reinterpret_cast<const size_t*>(this + 1);
+    }
+    inline size_t* buffer() {
+      return reinterpret_cast<size_t*>(this + 1);
+    }
+};
+
   class ReadContext : public IAsyncContext {
   public:
     typedef Key key_t;
@@ -605,6 +629,61 @@ protected:
 private:
     key_t key_;
     read_u64_pair_callback cb_;
+    void* target_;
+};
+
+class ReadTenElementsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef TenElementsValue value_t;
+
+    ReadTenElementsContext(const key_t& key, read_ten_elements_callback cb, void* target)
+            : key_{ key }
+            , cb_ { cb }
+            , target_ { target }  {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    ReadTenElementsContext(const ReadTenElementsContext& other)
+            : key_{ other.key_ }
+            , cb_ { other.cb_ }
+            , target_ { other.target_ }  {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+
+    inline void Get(const value_t& value) {
+      size_t sum = 0;
+      for (size_t i = 0; i < value.length_; ++i) {
+        sum += value.buffer()[i];
+      }
+      cb_(target_, sum / value.length_, Ok);
+    }
+    inline void GetAtomic(const value_t& value) {
+      size_t sum = 0;
+      for (size_t i = 0; i < value.length_; ++i) {
+        sum += value.buffer()[i];
+      }
+      cb_(target_, sum / value.length_, Ok);
+    }
+
+    /// For async reads returning not found
+    inline void ReturnNotFound() {
+      cb_(target_, 0, NotFound);
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    read_ten_elements_callback cb_;
     void* target_;
 };
 
@@ -1238,6 +1317,66 @@ private:
     uint64_t right_;
 };
 
+class RmwTenElementsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef TenElementsValue value_t;
+
+    RmwTenElementsContext(const uint64_t key, size_t modification)
+            : key_{ key }
+            , modification_{ modification } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    RmwTenElementsContext(RmwTenElementsContext& other)
+            : key_{ other.key_ }
+            , modification_{ other.modification_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + 10 * sizeof(size_t);
+    }
+    inline uint32_t value_size(const value_t& old_value) const {
+      return old_value.size();
+    }
+
+    inline void RmwInitial(value_t& value) {
+      for (size_t i = 1; i < 10; ++i) {
+        value.buffer()[i] = 0;
+      }
+      value.length_ = 1;
+      value.buffer()[value.tail_] = modification_;
+      value.tail_ = (value.tail_ + 1) % 10;
+    }
+    inline void RmwCopy(const value_t& old_value, value_t& value) {
+      value.length_ = old_value.length_ < 10 ? old_value.length_ + 1 : 10;
+      memcpy(value.buffer(), old_value.buffer(), 10 * sizeof(size_t));
+      value.tail_ = old_value.tail_;
+      value.buffer()[value.tail_] = modification_;
+      value.tail_ = (value.tail_ + 1) % 10;
+    }
+    inline bool RmwAtomic(value_t& value) {
+      value.length_ = value.length_ < 10 ? value.length_ + 1 : 10;
+      value.buffer()[value.tail_] = modification_;
+      value.tail_ = (value.tail_ + 1) % 10;
+      return true;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    size_t modification_;
+};
+
   class DeleteContext: public IAsyncContext {
   public:
       typedef Key key_t;
@@ -1299,6 +1438,7 @@ private:
       AUCTIONS_STORE,
       U64_STORE,
       U64_PAIR_STORE,
+      TEN_ELEMENTS_STORE,
   };
   typedef enum store_type store_type;
 
@@ -1311,6 +1451,7 @@ private:
   using store_auctions_t = FasterKv<U64Key, AuctionsValue, disk_t>;
   using store_u64_t = FasterKv<U64Key, U64Value, disk_t>;
   using store_u64_pair_t = FasterKv<U64Key, U64PairValue, disk_t>;
+  using store_ten_elements_t = FasterKv<U64Key, TenElementsValue, disk_t>;
   struct faster_t {
       union {
           store_t* store;
@@ -1319,6 +1460,7 @@ private:
           store_auctions_t* auctions_store;
           store_u64_t* u64_store;
           store_u64_pair_t* u64_pair_store;
+          store_ten_elements_t* ten_elements_store;
       } obj;
       store_type type;
   };
@@ -1367,6 +1509,14 @@ faster_t* faster_open_with_disk_u64_pair(const uint64_t table_size, const uint64
   std::experimental::filesystem::create_directory(storage);
   res->obj.u64_pair_store= new store_u64_pair_t { table_size, log_size, storage };
   res->type = U64_PAIR_STORE;
+  return res;
+}
+
+faster_t* faster_open_with_disk_ten_elements(const uint64_t table_size, const uint64_t log_size, const char* storage) {
+  faster_t* res = new faster_t();
+  std::experimental::filesystem::create_directory(storage);
+  res->obj.ten_elements_store = new store_ten_elements_t { table_size, log_size, storage };
+  res->type = TEN_ELEMENTS_STORE;
   return res;
 }
 
@@ -1498,6 +1648,16 @@ uint8_t faster_rmw_u64_pair(faster_t* faster_t, const uint64_t key, uint64_t lef
   return static_cast<uint8_t>(result);
 }
 
+uint8_t faster_rmw_ten_elements(faster_t* faster_t, const uint64_t key, size_t modification, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<RmwTenElementsContext> context { ctxt };
+  };
+
+  RmwTenElementsContext context{ key, modification };
+  Status result = faster_t->obj.ten_elements_store->Rmw(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
   uint8_t faster_read(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                        const uint64_t monotonic_serial_number, read_callback cb, void* target) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
@@ -1593,6 +1753,24 @@ uint8_t faster_read_u64_pair(faster_t* faster_t, const uint64_t key, const uint6
 
   if (result == Status::NotFound) {
     cb(target, NULL, NULL, NotFound);
+  }
+
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_read_ten_elements(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_ten_elements_callback cb, void* target) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<ReadTenElementsContext> context { ctxt };
+      if (result == Status::NotFound) {
+        context->ReturnNotFound();
+      }
+  };
+
+  ReadTenElementsContext context {key, cb, target};
+  Status result = faster_t->obj.ten_elements_store->Read(context, callback, monotonic_serial_number);
+
+  if (result == Status::NotFound) {
+    cb(target, 0, NotFound);
   }
 
   return static_cast<uint8_t>(result);
@@ -1837,6 +2015,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
       case U64_PAIR_STORE:
         delete faster_t->obj.u64_pair_store;
         break;
+      case TEN_ELEMENTS_STORE:
+        delete faster_t->obj.ten_elements_store;
+        break;
     }
     delete faster_t;
   }
@@ -1858,6 +2039,8 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           return faster_t->obj.u64_store->Size();
         case U64_PAIR_STORE:
           return faster_t->obj.u64_pair_store->Size();
+        case TEN_ELEMENTS_STORE:
+          return faster_t->obj.ten_elements_store->Size();
       }
     }
   }
@@ -1926,6 +2109,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
         case U64_PAIR_STORE:
           faster_t->obj.u64_pair_store->CompletePending(b);
           break;
+        case TEN_ELEMENTS_STORE:
+          faster_t->obj.ten_elements_store->CompletePending(b);
+          break;
       }
     }
   }
@@ -1955,6 +2141,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           break;
         case U64_PAIR_STORE:
           guid = faster_t->obj.u64_pair_store->StartSession();
+          break;
+        case TEN_ELEMENTS_STORE:
+          guid = faster_t->obj.ten_elements_store->StartSession();
           break;
       }
       char* str = new char[37];
@@ -2012,6 +2201,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           break;
         case U64_PAIR_STORE:
           faster_t->obj.u64_pair_store->Refresh();
+          break;
+        case TEN_ELEMENTS_STORE:
+          faster_t->obj.ten_elements_store->Refresh();
           break;
       }
     }
