@@ -17,4 +17,22 @@ struct person {
 
 typedef struct person person_t;
 
+struct auction {
+    size_t id;
+    size_t category;
+    size_t date_time;
+    size_t expires;
+    size_t reserve;
+};
+
+typedef struct auction auction_t;
+
+struct bid {
+    size_t price;
+    size_t bidder;
+    size_t date_time;
+};
+
+typedef struct bid bid_t;
+
 #endif //FASTER_NEXMARK_H
