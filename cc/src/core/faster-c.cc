@@ -7,10 +7,13 @@
 #include "device/file_system_disk.h"
 #include "device/null_disk.h"
 
+using namespace std::chrono_literals;
+
 extern "C" {
 
   void deallocate_vec(uint8_t*, uint64_t);
 
+  uint64_t locking_time_ns = 0;
   class Key {
     public:
       Key(const uint8_t* key, const uint64_t key_length)
@@ -294,22 +297,34 @@ extern "C" {
     }
     inline bool PutAtomic(Value& value) {
       bool replaced;
+      auto start_time = std::chrono::high_resolution_clock::now();
       while(!value.gen_lock_.try_lock(replaced) && !replaced) {
         std::this_thread::yield();
       }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::chrono::nanoseconds duration = end_time - start_time;
+      locking_time_ns += duration.count();
       if(replaced) {
         // Some other thread replaced this record.
         return false;
       }
       if(value.size_ < sizeof(Value) + length_) {
         // Current value is too small for in-place update.
+        start_time = std::chrono::high_resolution_clock::now();
         value.gen_lock_.unlock(true);
+        end_time = std::chrono::high_resolution_clock::now();
+        duration = end_time - start_time;
+        locking_time_ns += duration.count();
         return false;
       }
       // In-place update overwrites length and buffer, but not size.
       value.length_ = length_;
       std::memcpy(value.buffer(), input_, length_);
+      start_time = std::chrono::high_resolution_clock::now();
       value.gen_lock_.unlock(false);
+      end_time = std::chrono::high_resolution_clock::now();
+      duration = end_time - start_time;
+      locking_time_ns += duration.count();
       return true;
     }
 
@@ -384,9 +399,13 @@ extern "C" {
     }
     inline bool RmwAtomic(Value& value) {
       bool replaced;
+      auto start_time = std::chrono::high_resolution_clock::now();
       while(!value.gen_lock_.try_lock(replaced) && !replaced) {
         std::this_thread::yield();
       }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::chrono::nanoseconds duration = end_time - start_time;
+      locking_time_ns += duration.count();
       if(replaced) {
         // Some other thread replaced this record.
         return false;
@@ -396,13 +415,21 @@ extern "C" {
       }
       if(value.size_ < sizeof(Value) + new_length_) {
         // Current value is too small for in-place update.
+        start_time = std::chrono::high_resolution_clock::now();
         value.gen_lock_.unlock(true);
+        end_time = std::chrono::high_resolution_clock::now();
+        duration = end_time - start_time;
+        locking_time_ns += duration.count();
         return false;
       }
       // In-place update overwrites length and buffer, but not size.
       cb_(value.buffer(), value.length_, modification_, length_, rmw_logic_, value.buffer());
       value.length_ = new_length_;
+      start_time = std::chrono::high_resolution_clock::now();
       value.gen_lock_.unlock(false);
+      end_time = std::chrono::high_resolution_clock::now();
+      duration = end_time - start_time;
+      locking_time_ns += duration.count();
       return true;
     }
 
@@ -685,6 +712,7 @@ extern "C" {
   }
 
   void faster_destroy(faster_t *faster_t) {
+    printf("Total time in locking %" PRIu64 " ns.\n");
     if (faster_t == NULL)
       return;
 
