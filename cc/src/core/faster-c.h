@@ -131,6 +131,8 @@ uint8_t faster_read_auction_bids(faster_t* faster_t, const uint64_t key, const u
   uint8_t faster_delete(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                         const uint64_t monotonic_serial_number);
   uint8_t faster_delete_u64(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
+uint8_t faster_delete_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
+uint8_t faster_delete_auction_bids(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
   void* faster_scan_in_memory_init(faster_t* faster_t);
   void* faster_scan_in_memory_init_u64(faster_t* faster_t);
 void* faster_scan_in_memory_init_u64_pair(faster_t* faster_t);

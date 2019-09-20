@@ -2032,6 +2032,28 @@ uint8_t faster_delete_u64(faster_t* faster_t, const uint64_t key, const uint64_t
   return static_cast<uint8_t>(result);
 }
 
+uint8_t faster_delete_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<DeleteU64Context> context { ctxt };
+      assert(result == Status::Ok);
+  };
+
+  DeleteU64Context context { key };
+  Status result = faster_t->obj.auctions_store->Delete(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_delete_auction_bids(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<DeleteU64Context> context { ctxt };
+      assert(result == Status::Ok);
+  };
+
+  DeleteU64Context context { key };
+  Status result = faster_t->obj.auction_bids_store->Delete(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
 void* faster_scan_in_memory_init(faster_t* faster_t) {
   FasterIterator<Key, Value, disk_t>* iterator;
   switch (faster_t->type) {
