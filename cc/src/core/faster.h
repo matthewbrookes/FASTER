@@ -94,7 +94,7 @@ class FasterKv {
   typedef AsyncPendingDeleteContext<key_t> async_pending_delete_context_t;
 
   FasterKv(uint64_t table_size, uint64_t log_size, const std::string& filename,
-           double log_mutable_fraction = 0.9, bool pre_allocate_log = false)
+           double log_mutable_fraction = 0.9, bool pre_allocate_log = true)
     : min_table_size_{ table_size }
     , disk{ filename, epoch_ }
     , hlog{ log_size, epoch_, disk, disk.log(), log_mutable_fraction, pre_allocate_log }
