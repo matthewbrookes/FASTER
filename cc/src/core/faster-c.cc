@@ -2135,8 +2135,10 @@ faster_iterator_result_u64* faster_iterator_get_next_u64(void* iterator, void* r
   bool status = fasterIterator->GetNext(fasterRecord);
   faster_iterator_result_u64* res = (faster_iterator_result_u64*) malloc(sizeof(faster_iterator_result));
   res->status = status;
-  res->key = fasterRecord->key()->key();
-  res->value = fasterRecord->value()->value();
+  if (status) {
+    res->key = fasterRecord->key()->key();
+    res->value = fasterRecord->value()->value();
+  }
   return res;
 }
 
