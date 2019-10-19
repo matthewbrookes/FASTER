@@ -35,4 +35,11 @@ struct bid {
 
 typedef struct bid bid_t;
 
+struct tuple {
+    size_t left;
+    size_t right;
+};
+
+typedef struct tuple tuple_t;
+
 #endif //FASTER_NEXMARK_H

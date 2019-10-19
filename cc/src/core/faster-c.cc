@@ -12,6 +12,7 @@ extern "C" {
 
   void deallocate_vec(uint8_t*, uint64_t);
   void deallocate_u64_vec(uint64_t*, uint64_t);
+  void deallocate_tuple_vec(tuple_t*, uint64_t);
   void deallocate_string(char*);
 
   class Key {
@@ -382,6 +383,31 @@ private:
     uint64_t right_;
 };
 
+class U64PairsValue {
+public:
+    U64PairsValue()
+            : length_{ 0 } {
+    }
+
+    inline uint32_t size() const {
+      return length_ * sizeof(tuple_t);
+    }
+
+    friend class ReadU64PairsContext;
+    friend class UpsertU64PairsContext;
+    friend class RmwU64PairsContext;
+
+private:
+    uint64_t length_;
+
+    inline const tuple_t* buffer() const {
+      return reinterpret_cast<const tuple_t*>(this + 1);
+    }
+    inline tuple_t* buffer() {
+      return reinterpret_cast<tuple_t*>(this + 1);
+    }
+};
+
 class TenElementsValue : public IAsyncContext {
 public:
     TenElementsValue()
@@ -589,6 +615,53 @@ protected:
 private:
     key_t key_;
     read_auctions_callback cb_;
+    void* target_;
+};
+
+class ReadU64PairsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef U64PairsValue value_t;
+
+    ReadU64PairsContext(const key_t& key, read_u64_pairs_callback cb, void* target)
+            : key_{ key }
+            , cb_ { cb }
+            , target_ { target }  {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    ReadU64PairsContext(const ReadU64PairsContext& other)
+            : key_{ other.key_ }
+            , cb_ { other.cb_ }
+            , target_ { other.target_ }  {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+
+    inline void Get(const value_t& value) {
+      cb_(target_, value.buffer(), value.length_, Ok);
+    }
+    inline void GetAtomic(const value_t& value) {
+      cb_(target_, value.buffer(), value.length_, Ok);
+    }
+
+    /// For async reads returning not found
+    inline void ReturnNotFound() {
+      cb_(target_, NULL, 0, NotFound);
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    read_u64_pairs_callback cb_;
     void* target_;
 };
 
@@ -1020,6 +1093,59 @@ private:
     uint64_t length_;
 };
 
+class UpsertU64PairsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef U64PairsValue value_t;
+
+    UpsertU64PairsContext(const key_t& key, tuple_t* input, uint64_t length)
+            : key_{ key }
+            , input_{ input }
+            , length_{ length } {
+    }
+
+    /// Copy (and deep-copy) constructor.
+    UpsertU64PairsContext(UpsertU64PairsContext& other)
+            : key_{ other.key_ }
+            , input_{ other.input_ }
+            , length_{ other.length_ } {
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + length_ * sizeof(uint64_t);
+    }
+    /// Non-atomic and atomic Put() methods.
+    inline void Put(value_t& value) {
+      value.length_ = length_;
+      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      deallocate_tuple_vec(input_, length_);
+    }
+    inline bool PutAtomic(value_t& value) {
+      if (value.length_ < length_) {
+        return false;
+      }
+      value.length_ = length_;
+      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      deallocate_tuple_vec(input_, length_);
+      return true;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    tuple_t* input_;
+    uint64_t length_;
+};
+
 class UpsertU64Context : public IAsyncContext {
 public:
     typedef U64Key key_t;
@@ -1309,6 +1435,63 @@ protected:
 private:
     key_t key_;
     uint64_t* modification_;
+    uint64_t length_;
+};
+
+class RmwU64PairsContext : public IAsyncContext {
+public:
+    typedef U64Key key_t;
+    typedef U64PairsValue value_t;
+
+    RmwU64PairsContext(const uint64_t key, tuple_t* modification, uint64_t length)
+            : key_{ key }
+            , modification_{ modification }
+            , length_{ length }{
+    }
+
+    /// Copy (and deep-copy) constructor.
+    RmwU64PairsContext(RmwU64PairsContext& other)
+            : key_{ other.key_ }
+            , modification_{ other.modification_ }
+            , length_{ other.length_ }{
+    }
+
+    /// The implicit and explicit interfaces require a key() accessor.
+    inline const key_t& key() const {
+      return key_;
+    }
+    inline uint32_t value_size() const {
+      return sizeof(value_t) + sizeof(uint64_t);
+    }
+    inline uint32_t value_size(const value_t& old_value) {
+      return sizeof(value_t) + (old_value.length_ + length_) * sizeof(uint64_t);
+    }
+
+    inline void RmwInitial(value_t& value) {
+      value.length_ = length_;
+      std::memcpy(value.buffer(), &modification_, length_ * sizeof(uint64_t));
+      deallocate_tuple_vec(modification_, length_);
+    }
+    inline void RmwCopy(const value_t& old_value, value_t& value) {
+      value.length_ = old_value.length_ + length_;
+      std::memcpy(value.buffer(), old_value.buffer(), old_value.length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer() + old_value.length_, modification_, length_ * sizeof(uint64_t));
+      deallocate_tuple_vec(modification_, length_);
+    }
+    inline bool RmwAtomic(value_t& value) {
+      // Value always grows so no in-place possible
+      return false;
+    }
+
+protected:
+    /// The explicit interface requires a DeepCopy_Internal() implementation.
+    Status DeepCopy_Internal(IAsyncContext*& context_copy) {
+      return IAsyncContext::DeepCopy_Internal(*this, context_copy);
+    }
+
+private:
+    key_t key_;
+    tuple_t* modification_;
     uint64_t length_;
 };
 
@@ -1769,6 +1952,7 @@ private:
       TEN_ELEMENTS_STORE,
       AUCTION_BIDS_STORE,
       COMPOSITE_U64_STORE,
+      U64_PAIRS_STORE,
   };
   typedef enum store_type store_type;
 
@@ -1784,6 +1968,7 @@ private:
   using store_ten_elements_t = FasterKv<U64Key, TenElementsValue, disk_t>;
   using store_auction_bids_t = FasterKv<U64Key, AuctionBidsValue, disk_t>;
   using store_composite_u64_t = FasterKv<U64PairKey, U64Value, disk_t>;
+  using store_u64_pairs_t = FasterKv<U64Key, U64PairsValue, disk_t>;
   struct faster_t {
       union {
           store_t* store;
@@ -1795,6 +1980,7 @@ private:
           store_ten_elements_t* ten_elements_store;
           store_auction_bids_t * auction_bids_store;
           store_composite_u64_t* composite_u64_store;
+          store_u64_pairs_t* u64_pairs_store;
       } obj;
       store_type type;
   };
@@ -1870,6 +2056,14 @@ faster_t* faster_open_with_disk_composite_u64(const uint64_t table_size, const u
   return res;
 }
 
+faster_t* faster_open_with_disk_u64_pairs(const uint64_t table_size, const uint64_t log_size, const char* storage) {
+  faster_t* res = new faster_t();
+  std::experimental::filesystem::create_directory(storage);
+  res->obj.u64_pairs_store = new store_u64_pairs_t { table_size, log_size, storage };
+  res->type = U64_PAIRS_STORE;
+  return res;
+}
+
   uint8_t faster_upsert(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
                         uint8_t* value, uint64_t value_length, const uint64_t monotonic_serial_number) {
     auto callback = [](IAsyncContext* ctxt, Status result) {
@@ -1906,6 +2100,16 @@ uint8_t faster_upsert_auctions(faster_t* faster_t, const uint64_t key, uint64_t*
 
   UpsertAuctionsContext context { key, input, length };
   Status result = faster_t->obj.auctions_store->Upsert(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_upsert_u64_pairs(faster_t* faster_t, const uint64_t key, tuple_t* input, uint64_t length, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      assert(result == Status::Ok);
+  };
+
+  UpsertU64PairsContext context { key, input, length };
+  Status result = faster_t->obj.u64_pairs_store->Upsert(context, callback, monotonic_serial_number);
   return static_cast<uint8_t>(result);
 }
 
@@ -1967,6 +2171,16 @@ uint8_t faster_upsert_u64_pair(faster_t* faster_t, const uint64_t key, const uin
     Status result = faster_t->obj.auctions_store->Rmw(context, callback, monotonic_serial_number);
     return static_cast<uint8_t>(result);
   }
+
+uint8_t faster_rmw_u64_pairs(faster_t* faster_t, const uint64_t key, tuple_t* modification, uint64_t length, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<RmwAuctionsContext> context { ctxt };
+  };
+
+  RmwU64PairsContext context{ key, modification, length };
+  Status result = faster_t->obj.u64_pairs_store->Rmw(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
 
 uint8_t faster_rmw_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number) {
   auto callback = [](IAsyncContext* ctxt, Status result) {
@@ -2094,6 +2308,24 @@ uint8_t faster_read_auctions(faster_t* faster_t, const uint64_t key, const uint6
 
   ReadAuctionsContext context {key, cb, target};
   Status result = faster_t->obj.auctions_store->Read(context, callback, monotonic_serial_number);
+
+  if (result == Status::NotFound) {
+    cb(target, NULL, 0, NotFound);
+  }
+
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_read_u64_pairs(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_u64_pairs_callback cb, void* target) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<ReadU64PairsContext> context { ctxt };
+      if (result == Status::NotFound) {
+        context->ReturnNotFound();
+      }
+  };
+
+  ReadU64PairsContext context {key, cb, target};
+  Status result = faster_t->obj.u64_pairs_store->Read(context, callback, monotonic_serial_number);
 
   if (result == Status::NotFound) {
     cb(target, NULL, 0, NotFound);
@@ -2230,6 +2462,17 @@ uint8_t faster_delete_auctions(faster_t* faster_t, const uint64_t key, const uin
 
   DeleteU64Context context { key };
   Status result = faster_t->obj.auctions_store->Delete(context, callback, monotonic_serial_number);
+  return static_cast<uint8_t>(result);
+}
+
+uint8_t faster_delete_u64_pairs(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number) {
+  auto callback = [](IAsyncContext* ctxt, Status result) {
+      CallbackContext<DeleteU64Context> context { ctxt };
+      assert(result == Status::Ok);
+  };
+
+  DeleteU64Context context { key };
+  Status result = faster_t->obj.u64_pairs_store->Delete(context, callback, monotonic_serial_number);
   return static_cast<uint8_t>(result);
 }
 
@@ -2466,6 +2709,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
       case U64_PAIR_STORE:
         delete faster_t->obj.u64_pair_store;
         break;
+      case U64_PAIRS_STORE:
+        delete faster_t->obj.u64_pairs_store;
+        break;
       case TEN_ELEMENTS_STORE:
         delete faster_t->obj.ten_elements_store;
         break;
@@ -2496,6 +2742,8 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           return faster_t->obj.u64_store->Size();
         case U64_PAIR_STORE:
           return faster_t->obj.u64_pair_store->Size();
+        case U64_PAIRS_STORE:
+          return faster_t->obj.u64_pairs_store->Size();
         case TEN_ELEMENTS_STORE:
           return faster_t->obj.ten_elements_store->Size();
         case AUCTION_BIDS_STORE:
@@ -2570,6 +2818,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
         case U64_PAIR_STORE:
           faster_t->obj.u64_pair_store->CompletePending(b);
           break;
+        case U64_PAIRS_STORE:
+          faster_t->obj.u64_pairs_store->CompletePending(b);
+          break;
         case TEN_ELEMENTS_STORE:
           faster_t->obj.ten_elements_store->CompletePending(b);
           break;
@@ -2608,6 +2859,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           break;
         case U64_PAIR_STORE:
           guid = faster_t->obj.u64_pair_store->StartSession();
+          break;
+        case U64_PAIRS_STORE:
+          guid = faster_t->obj.u64_pairs_store->StartSession();
           break;
         case TEN_ELEMENTS_STORE:
           guid = faster_t->obj.ten_elements_store->StartSession();
@@ -2674,6 +2928,9 @@ void faster_iterator_result_destroy_u64_pair(faster_iterator_result_u64_pair* re
           break;
         case U64_PAIR_STORE:
           faster_t->obj.u64_pair_store->Refresh();
+          break;
+        case U64_PAIRS_STORE:
+          faster_t->obj.u64_pairs_store->Refresh();
           break;
         case TEN_ELEMENTS_STORE:
           faster_t->obj.ten_elements_store->Refresh();

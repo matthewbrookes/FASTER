@@ -97,6 +97,10 @@ extern "C" {
     delete[] vec;
   }
 
+void deallocate_tuple_vec(tuple_t* vec, uint64_t length) {
+  delete[] vec;
+}
+
   void deallocate_string(char* str) {
     free(str);
   }
