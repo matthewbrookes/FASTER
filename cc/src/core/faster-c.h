@@ -99,6 +99,7 @@ struct faster_iterator_result_u64_pair {
   faster_t* faster_open_with_disk_auctions(const uint64_t table_size, const uint64_t log_size, const char* storage);
   faster_t* faster_open_with_disk_u64(const uint64_t table_size, const uint64_t log_size, const char* storage);
   faster_t* faster_open_with_disk_u64_pair(const uint64_t table_size, const uint64_t log_size, const char* storage);
+faster_t* faster_open_with_disk_composite_u64(const uint64_t table_size, const uint64_t log_size, const char* storage);
 faster_t* faster_open_with_disk_ten_elements(const uint64_t table_size, const uint64_t log_size, const char* storage);
 faster_t* faster_open_with_disk_auction_bids(const uint64_t table_size, const uint64_t log_size, const char* storage);
   uint8_t faster_upsert(faster_t* faster_t, const uint8_t* key, const uint64_t key_length,
@@ -116,6 +117,7 @@ faster_t* faster_open_with_disk_auction_bids(const uint64_t table_size, const ui
   uint8_t faster_rmw_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number);
   uint8_t faster_rmw_u64_pair(faster_t* faster_t, const uint64_t key, uint64_t left, uint64_t right, const uint64_t monotonic_serial_number);
   uint8_t faster_rmw_decrease_u64(faster_t* faster_t, const uint64_t key, uint64_t modification, const uint64_t monotonic_serial_number);
+uint8_t faster_rmw_composite_u64(faster_t* faster_t, const uint64_t left, const uint64_t right, uint64_t modification, const uint64_t monotonic_serial_number);
 uint8_t faster_rmw_ten_elements(faster_t* faster_t, const uint64_t key, size_t modification, const uint64_t monotonic_serial_number);
 uint8_t faster_rmw_auction_bids_auction(faster_t* faster_t, const uint64_t key, auction_t modification, const uint64_t monotonic_serial_number);
 uint8_t faster_rmw_auction_bids_bid(faster_t* faster_t, const uint64_t key, bid_t modification, const uint64_t monotonic_serial_number);
@@ -125,6 +127,7 @@ uint8_t faster_rmw_auction_bids_bid(faster_t* faster_t, const uint64_t key, bid_
                        read_auctions_callback cb, void* target);
   uint8_t faster_read_person(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_person_callback cb, void* target);
   uint8_t faster_read_u64(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_u64_callback cb, void* target);
+uint8_t faster_read_u64_composite(faster_t* faster_t, const uint64_t left, const uint64_t right, const uint64_t monotonic_serial_number, read_u64_callback cb, void* target);
   uint8_t faster_read_u64_pair(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_u64_pair_callback cb, void* target);
 uint8_t faster_read_ten_elements(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_ten_elements_callback cb, void* target);
 uint8_t faster_read_auction_bids(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number, read_auction_bids_callback cb, void* target);
@@ -133,6 +136,7 @@ uint8_t faster_read_auction_bids(faster_t* faster_t, const uint64_t key, const u
   uint8_t faster_delete_u64(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
 uint8_t faster_delete_auctions(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
 uint8_t faster_delete_auction_bids(faster_t* faster_t, const uint64_t key, const uint64_t monotonic_serial_number);
+uint8_t faster_delete_u64_composite(faster_t* faster_t, const uint64_t left, const uint64_t right, const uint64_t monotonic_serial_number);
   void* faster_scan_in_memory_init(faster_t* faster_t);
   void* faster_scan_in_memory_init_u64(faster_t* faster_t);
 void* faster_scan_in_memory_init_u64_pair(faster_t* faster_t);
