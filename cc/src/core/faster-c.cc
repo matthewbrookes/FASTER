@@ -1116,12 +1116,12 @@ public:
       return key_;
     }
     inline uint32_t value_size() const {
-      return sizeof(value_t) + length_ * sizeof(uint64_t);
+      return sizeof(value_t) + length_ * sizeof(tuple_t);
     }
     /// Non-atomic and atomic Put() methods.
     inline void Put(value_t& value) {
       value.length_ = length_;
-      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      memcpy(value.buffer(), input_, length_ * sizeof(tuple_t));
       deallocate_tuple_vec(input_, length_);
     }
     inline bool PutAtomic(value_t& value) {
@@ -1129,7 +1129,7 @@ public:
         return false;
       }
       value.length_ = length_;
-      memcpy(value.buffer(), input_, length_ * sizeof(uint64_t));
+      memcpy(value.buffer(), input_, length_ * sizeof(tuple_t));
       deallocate_tuple_vec(input_, length_);
       return true;
     }
@@ -1412,7 +1412,7 @@ public:
 
     inline void RmwInitial(value_t& value) {
       value.length_ = length_;
-      std::memcpy(value.buffer(), &modification_, length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer(), modification_, length_ * sizeof(uint64_t));
       deallocate_u64_vec(modification_, length_);
     }
     inline void RmwCopy(const value_t& old_value, value_t& value) {
@@ -1461,21 +1461,21 @@ public:
       return key_;
     }
     inline uint32_t value_size() const {
-      return sizeof(value_t) + sizeof(uint64_t);
+      return sizeof(value_t) + (length_ * sizeof(tuple_t));
     }
     inline uint32_t value_size(const value_t& old_value) {
-      return sizeof(value_t) + (old_value.length_ + length_) * sizeof(uint64_t);
+      return sizeof(value_t) + ((old_value.length_ + length_) * sizeof(tuple_t));
     }
 
     inline void RmwInitial(value_t& value) {
       value.length_ = length_;
-      std::memcpy(value.buffer(), &modification_, length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer(), modification_, length_ * sizeof(tuple_t));
       deallocate_tuple_vec(modification_, length_);
     }
     inline void RmwCopy(const value_t& old_value, value_t& value) {
       value.length_ = old_value.length_ + length_;
-      std::memcpy(value.buffer(), old_value.buffer(), old_value.length_ * sizeof(uint64_t));
-      std::memcpy(value.buffer() + old_value.length_, modification_, length_ * sizeof(uint64_t));
+      std::memcpy(value.buffer(), old_value.buffer(), old_value.length_ * sizeof(tuple_t));
+      std::memcpy(value.buffer() + old_value.length_, modification_, length_ * sizeof(tuple_t));
       deallocate_tuple_vec(modification_, length_);
     }
     inline bool RmwAtomic(value_t& value) {
